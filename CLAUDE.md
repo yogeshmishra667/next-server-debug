@@ -3,6 +3,8 @@
 ## Project Overview
 `next-server-debug` is a production-ready npm package providing a floating debug panel for Next.js App Router. It lets developers inspect server-side data (DB results, API responses, timing, headers, env info) directly in the browser during development, with zero production cost.
 
+**Published to npm**: https://www.npmjs.com/package/next-server-debug (v0.1.0, published 2026-03-21)
+
 ## Architecture
 
 ```
