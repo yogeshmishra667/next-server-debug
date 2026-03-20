@@ -1,5 +1,7 @@
 src/
 examples/
+tests/
+test-app/
 tsconfig.json
 tsup.config.ts
 .github/

@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      - run: pnpm build
+
+      - run: pnpm test
+
+      - name: Verify dist output
+        run: |
+          test -f dist/index.js
+          test -f dist/index.mjs
+          test -f dist/index.d.ts
+          test -f dist/server.js
+          test -f dist/server.mjs
+          test -f dist/server.d.ts
+          head -1 dist/index.mjs | grep -q '"use client"'
+          ! head -1 dist/server.mjs | grep -q '"use client"'
+
+      - name: Check bundle size
+        run: |
+          SIZE=$(gzip -c dist/index.mjs | wc -c)
+          echo "Client bundle gzipped: ${SIZE} bytes"
+          if [ "$SIZE" -gt 10240 ]; then
+            echo "Bundle too large (>10KB gzipped)"
+            exit 1
+          fi

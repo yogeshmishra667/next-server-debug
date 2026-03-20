@@ -2,3 +2,5 @@ node_modules/
 dist/
 *.tsbuildinfo
 .next/
+test-app/.next/
+test-app/node_modules/
