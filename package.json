@@ -1,6 +1,6 @@
 {
   "name": "next-server-debug",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Floating debug panel for Next.js App Router. Inspect server data in the browser during development. Zero production cost.",
   "keywords": [
     "nextjs",
