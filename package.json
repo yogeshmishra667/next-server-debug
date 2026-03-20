@@ -11,11 +11,11 @@
     "app-router",
     "development"
   ],
-  "author": "",
+  "author": "Yogesh Mishra <yogeshmishra667@gmail.com>",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/next-server-debug"
+    "url": "https://github.com/yogeshmishra667/next-server-debug"
   },
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
