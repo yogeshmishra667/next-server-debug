@@ -1,9 +1,9 @@
 # next-server-debug
 
-Floating debug panel for Next.js App Router. Inspect server data in the browser during development. Zero production cost.
+Floating debug panel for Next.js App Router. Inspect server data — DB queries, API calls, headers, cache status, timing — directly in the browser during development. Zero production cost.
 
 [![npm version](https://img.shields.io/npm/v/next-server-debug)](https://www.npmjs.com/package/next-server-debug)
-[![license](https://img.shields.io/npm/l/next-server-debug)](https://github.com/yourusername/next-server-debug/blob/main/LICENSE)
+[![license](https://img.shields.io/npm/l/next-server-debug)](https://github.com/yogeshmishra667/next-server-debug/blob/main/LICENSE)
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
 
 ## The problem
@@ -134,6 +134,38 @@ const entry = inspectSearchParams(
 );
 ```
 
+#### `inspectCache(label, url, init?, source?): Promise<{ response: Response; entry: DebugEntry }>`
+
+Fetch a URL and inspect its cache status. Shows a colored **HIT / MISS / STALE / REVALIDATE / SKIP** pill in the panel by reading `x-nextjs-cache`, `x-vercel-cache`, and `cf-cache-status` response headers.
+
+```ts
+import { inspectCache } from "next-server-debug/server";
+
+const { response, entry } = await inspectCache(
+  "JSONPlaceholder API",
+  "https://jsonplaceholder.typicode.com/posts/1",
+  undefined,         // optional RequestInit
+  "app/page.tsx"
+);
+const data = await response.json();
+```
+
+#### `debugRedirect(url, options?): never`
+
+Log a warn-level entry before calling Next.js `redirect()`. Useful for tracing which redirect fired and why.
+
+```ts
+import { debugRedirect } from "next-server-debug/server";
+
+if (!session) {
+  debugRedirect("/login", {
+    reason: "No active session",
+    source: "app/dashboard/page.tsx",
+    type: "replace",          // "replace" | "push" (default "replace")
+  });
+}
+```
+
 #### `safeSerialize(data): unknown`
 
 Safely serialize data, handling circular references and truncating values over 50KB.
@@ -157,8 +189,10 @@ import { DebugPanel } from "next-server-debug";
   defaultCollapsed={false}
   title="server debug"
   theme="dark"                // "dark" | "light" | "auto"
-  maxHeight={360}             // px
+  maxHeight={360}             // initial panel height in px (resizable)
   opacity={0.97}
+  editorScheme="vscode"       // "vscode" | "cursor" | "webstorm" | false
+  projectRoot="/Users/you/my-app"  // used to resolve relative source paths
 />
 ```
 
@@ -171,9 +205,11 @@ Returns `null` in production (`NODE_ENV === 'production'`).
 
 **Interactions:**
 - Drag the header to reposition (snaps to viewport edges)
+- Drag the resize grip (bottom-right corner) to resize width and height
 - Click the green traffic light dot to copy all entries as JSON
 - Right-click an entry row to copy that entry's data
 - Click a timestamp to toggle between absolute and relative time
+- Click a source filename to open it in your editor (requires `editorScheme` prop)
 
 #### `<DebugProvider>`
 
@@ -207,6 +243,62 @@ function MyComponent() {
 }
 ```
 
+### Prisma plugin (`next-server-debug/prisma`)
+
+Auto-log all Prisma queries with timing as `perf` entries. Errors create `error` entries.
+
+```ts
+import { withDebugLogging } from "next-server-debug/prisma";
+import { createDebugger } from "next-server-debug/server";
+
+const debug = createDebugger("app/page.tsx");
+const prismaWithDebug = prisma.$extends(withDebugLogging(debug));
+
+// All queries are now logged automatically
+const users = await prismaWithDebug.user.findMany();
+```
+
+Or use the standalone helper that manages its own debugger:
+
+```ts
+import { createPrismaDebugExtension } from "next-server-debug/prisma";
+
+const { extension, getEntries } = createPrismaDebugExtension("db");
+const prismaWithDebug = prisma.$extends(extension);
+
+const users = await prismaWithDebug.user.findMany();
+
+// In your component:
+<DebugPanel entries={getEntries()} />
+```
+
+### Drizzle plugin (`next-server-debug/drizzle`)
+
+Auto-log all Drizzle SQL queries as `info` entries with `drizzle` and `sql` tags.
+
+```ts
+import { createDrizzleDebugLogger } from "next-server-debug/drizzle";
+import { drizzle } from "drizzle-orm/node-postgres";
+
+const { logger, getEntries } = createDrizzleDebugLogger("db");
+const db = drizzle(pool, { logger });
+
+const users = await db.select().from(usersTable);
+
+// In your component:
+<DebugPanel entries={getEntries()} />
+```
+
+Or pass a `DebugLogger` instance directly:
+
+```ts
+import { DebugLogger } from "next-server-debug/drizzle";
+import { createDebugger } from "next-server-debug/server";
+
+const debug = createDebugger("app/page.tsx");
+const db = drizzle(pool, { logger: new DebugLogger(debug) });
+```
+
 ## Patterns
 
 ### Timed database queries
@@ -228,6 +320,50 @@ const posts = await debug.timed("SELECT posts", () =>
 ```tsx
 const headersEntry = await inspectHeaders("app/page.tsx");
 // Authorization, Cookie, x-api-key values are automatically redacted
+```
+
+### Cache inspection
+
+```tsx
+import { inspectCache } from "next-server-debug/server";
+
+const { response, entry } = await inspectCache(
+  "Products API",
+  "https://api.example.com/products",
+  { next: { revalidate: 60 } },
+  "app/page.tsx"
+);
+const products = await response.json();
+// entry shows HIT/MISS/STALE pill in the panel
+```
+
+### Redirect interception
+
+```tsx
+import { debugRedirect } from "next-server-debug/server";
+
+export default async function Page() {
+  const session = await getSession();
+  if (!session) {
+    debugRedirect("/login", {
+      reason: "No active session",
+      source: "app/dashboard/page.tsx",
+    });
+  }
+  // ...
+}
+```
+
+### Editor deep links
+
+Click any source filename in the panel to open that file directly in your editor:
+
+```tsx
+<DebugPanel
+  entries={allEntries}
+  editorScheme="vscode"    // or "cursor" | "webstorm"
+  projectRoot={process.cwd()}
+/>
 ```
 
 ### Conditional warnings
@@ -401,7 +537,7 @@ There is no API route, no WebSocket, no polling. The data flows through React's 
 Contributions are welcome. Please open an issue first to discuss what you'd like to change.
 
 ```bash
-git clone https://github.com/yourusername/next-server-debug
+git clone https://github.com/yogeshmishra667/next-server-debug
 cd next-server-debug
 pnpm install
 pnpm dev    # watch mode

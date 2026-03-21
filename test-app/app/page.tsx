@@ -96,7 +96,7 @@ export default async function Page({ searchParams }: Props) {
         entries={allEntries}
         theme="auto"
         editorScheme="vscode"
-        projectRoot="/Users/yogeshmishra/Codes/next-server-debug/test-app"
+        projectRoot={process.cwd()}
       />
     </main>
   );
