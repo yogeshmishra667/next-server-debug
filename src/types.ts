@@ -4,6 +4,11 @@
 export type DebugLevel = "info" | "warn" | "error" | "success" | "perf";
 
 /**
+ * Cache status for fetch requests inspected via `inspectCache()`.
+ */
+export type CacheStatus = "HIT" | "MISS" | "STALE" | "REVALIDATE" | "SKIP";
+
+/**
  * A single debug entry representing a piece of server-side data
  * captured for inspection in the browser debug panel.
  */
@@ -26,6 +31,8 @@ export interface DebugEntry {
   tags?: string[];
   /** Byte size of the serialized `data` field (computed automatically). */
   size?: number;
+  /** Cache status when this entry was created via `inspectCache()`. */
+  cacheStatus?: CacheStatus;
 }
 
 /**
@@ -59,6 +66,10 @@ export interface DebugPanelProps {
   maxHeight?: number;
   /** Panel opacity from 0 to 1. Default: `0.97`. */
   opacity?: number;
+  /** Editor URL scheme for source file deep linking. Default: `"vscode"`. Set to `false` to disable. */
+  editorScheme?: "vscode" | "cursor" | "webstorm" | false;
+  /** Absolute path to the project root for resolving relative source paths. */
+  projectRoot?: string;
 }
 
 /**

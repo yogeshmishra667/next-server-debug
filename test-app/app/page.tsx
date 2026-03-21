@@ -3,6 +3,7 @@ import {
   inspectHeaders,
   inspectEnv,
   inspectSearchParams,
+  inspectCache,
 } from "next-server-debug/server";
 import { DebugPanel } from "next-server-debug";
 
@@ -63,7 +64,15 @@ export default async function Page({ searchParams }: Props) {
     },
   });
 
-  const allEntries = [headersEntry, envEntry, paramsEntry, ...debug.entries];
+  // Feature 1: Cache Inspector — fetch a real URL and inspect cache headers
+  const { entry: cacheEntry } = await inspectCache(
+    "JSONPlaceholder API",
+    "https://jsonplaceholder.typicode.com/posts/1",
+    undefined,
+    "app/page.tsx"
+  );
+
+  const allEntries = [headersEntry, envEntry, paramsEntry, cacheEntry, ...debug.entries];
 
   return (
     <main>
@@ -72,19 +81,23 @@ export default async function Page({ searchParams }: Props) {
         {users.length} users, {posts.length} posts loaded from server.
       </p>
       <p style={{ color: "#666", fontSize: 14 }}>
-        Check the debug panel in the bottom-right corner. Try:
+        Check the debug panel. New features to try:
       </p>
       <ul style={{ color: "#666", fontSize: 14, lineHeight: 1.8 }}>
+        <li>🟢 <strong>Cache pill</strong> — see HIT/MISS badge on &quot;JSONPlaceholder API&quot; entry</li>
+        <li>🔗 <strong>Deep link</strong> — click any <code>page.tsx</code> source link to open in VS Code</li>
         <li>Click entries to expand JSON data</li>
         <li>Use filter tabs (info, warn, error, success, perf)</li>
-        <li>Type in the search box to filter by label</li>
-        <li>Drag the header to reposition the panel</li>
         <li>Press Cmd+Shift+D to toggle visibility</li>
-        <li>Click the green dot to copy all entries as JSON</li>
         <li>Right-click an entry to copy its data</li>
         <li>Click a timestamp to toggle relative time</li>
       </ul>
-      <DebugPanel entries={allEntries} theme="auto" />
+      <DebugPanel
+        entries={allEntries}
+        theme="auto"
+        editorScheme="vscode"
+        projectRoot="/Users/yogeshmishra/Codes/next-server-debug/test-app"
+      />
     </main>
   );
 }

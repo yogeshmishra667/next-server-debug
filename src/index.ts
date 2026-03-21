@@ -1,5 +1,6 @@
 // Client-safe exports
 export type {
+  CacheStatus,
   DebugLevel,
   DebugEntry,
   DebugSnapshot,

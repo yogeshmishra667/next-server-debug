@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
 import type {
+  CacheStatus,
   DebugEntry,
   DebugLevel,
   DebugSnapshot,
@@ -482,4 +483,128 @@ export function inspectSearchParams(
   source: string = "searchParams"
 ): DebugEntry {
   return dbg("Search Params", searchParams, source, "info");
+}
+
+// ─── Cache Inspector ─────────────────────────────────────────────────────────
+
+const CACHE_HEADER_KEYS = [
+  "x-nextjs-cache",
+  "x-vercel-cache",
+  "cf-cache-status",
+] as const;
+
+function parseCacheStatus(headerValue: string): CacheStatus {
+  const normalized = headerValue.toUpperCase().trim();
+  if (normalized === "HIT") return "HIT";
+  if (normalized === "MISS") return "MISS";
+  if (normalized === "STALE") return "STALE";
+  if (normalized === "REVALIDATED" || normalized === "REVALIDATE")
+    return "REVALIDATE";
+  return "SKIP";
+}
+
+/**
+ * Fetch a URL and inspect its cache status from response headers.
+ * Reads `x-nextjs-cache`, `x-vercel-cache`, and `cf-cache-status`.
+ * Returns both the original `Response` and a `DebugEntry` with `cacheStatus`.
+ *
+ * @param label  - Short description of the fetch
+ * @param url    - URL to fetch
+ * @param init   - Optional `RequestInit` (headers, method, etc.)
+ * @param source - Optional source identifier (default: `"cache"`)
+ * @returns Object containing the fetch response and a debug entry
+ */
+export async function inspectCache(
+  label: string,
+  url: string | URL,
+  init?: RequestInit,
+  source: string = "cache"
+): Promise<{ response: Response; entry: DebugEntry }> {
+  const start = performance.now();
+  try {
+    const response = await fetch(url, init);
+    const durationMs = Math.round((performance.now() - start) * 100) / 100;
+
+    let cacheStatus: CacheStatus = "MISS";
+    for (const headerKey of CACHE_HEADER_KEYS) {
+      const value = response.headers.get(headerKey);
+      if (value) {
+        cacheStatus = parseCacheStatus(value);
+        break;
+      }
+    }
+
+    const entry = dbg(
+      label,
+      {
+        url: url.toString(),
+        status: response.status,
+        cacheStatus,
+        durationMs,
+        headers: Object.fromEntries(
+          CACHE_HEADER_KEYS.filter((k) => response.headers.has(k)).map((k) => [
+            k,
+            response.headers.get(k),
+          ])
+        ),
+      },
+      source,
+      "perf",
+      ["cache"]
+    );
+    entry.durationMs = durationMs;
+    entry.cacheStatus = cacheStatus;
+
+    return { response, entry };
+  } catch (error: unknown) {
+    const durationMs = Math.round((performance.now() - start) * 100) / 100;
+    const entry = dbg(
+      label,
+      {
+        url: url.toString(),
+        error: error instanceof Error ? error.message : String(error),
+        durationMs,
+      },
+      source,
+      "error",
+      ["cache"]
+    );
+    entry.durationMs = durationMs;
+    entry.cacheStatus = "MISS";
+    throw error;
+  }
+}
+
+// ─── Redirect Interceptor ────────────────────────────────────────────────────
+
+/**
+ * Log a redirect before executing it via Next.js `redirect()`.
+ * Creates a warn-level entry with the redirect URL and optional reason,
+ * then calls `redirect()` which throws internally.
+ *
+ * @param url     - The URL to redirect to
+ * @param options - Optional reason, source, and redirect type
+ * @returns Never — `redirect()` always throws
+ */
+export function debugRedirect(
+  url: string,
+  options?: { reason?: string; source?: string; type?: "replace" | "push" }
+): never {
+  dbg(
+    `Redirect → ${url}`,
+    {
+      url,
+      reason: options?.reason ?? null,
+      type: options?.type ?? "replace",
+    },
+    options?.source ?? "redirect",
+    "warn",
+    ["redirect"]
+  );
+
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const nav = require("next/navigation") as {
+    redirect: (url: string, type?: "replace" | "push") => never;
+  };
+  return nav.redirect(url, options?.type);
 }

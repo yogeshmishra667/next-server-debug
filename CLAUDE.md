@@ -3,36 +3,43 @@
 ## Project Overview
 `next-server-debug` is a production-ready npm package providing a floating debug panel for Next.js App Router. It lets developers inspect server-side data (DB results, API responses, timing, headers, env info) directly in the browser during development, with zero production cost.
 
-**Published to npm**: https://www.npmjs.com/package/next-server-debug (v0.1.0, published 2026-03-21)
+**Published to npm**: https://www.npmjs.com/package/next-server-debug (v0.3.0)
 
 ## Architecture
 
 ```
 src/
-  types.ts           → All shared TypeScript interfaces (DebugEntry, DebugLevel, etc.)
+  types.ts           → All shared TypeScript interfaces (DebugEntry, DebugLevel, CacheStatus, etc.)
   debug.server.ts    → Server-side utilities (Node.js only, no React/browser APIs)
   DebugPanel.tsx     → "use client" floating panel component (inline styles, zero deps)
   DebugProvider.tsx   → "use client" context provider + useDebug() hook
+  prisma.ts          → Prisma $extends plugin for auto-logging SQL (subpath: /prisma)
+  drizzle.ts         → Drizzle logger adapter for auto-logging SQL (subpath: /drizzle)
   index.ts           → Client-safe exports (panel, provider, types)
   server.ts          → Server-only exports (subpath: next-server-debug/server)
 tests/
-  debug-server.test.ts → 34 vitest tests for server utilities
+  debug-server.test.ts  → 34 vitest tests for server utilities
+  prisma-plugin.test.ts → 7 tests for Prisma plugin
+  drizzle-plugin.test.ts → 5 tests for Drizzle plugin
 test-app/            → Next.js 16 integration test app
 examples/            → 5 usage examples (basic, advanced, route-handler, server-action, with-provider)
 ```
 
 ## Key Design Decisions
-- **Dual entry points**: `index.ts` (client, has "use client" banner) and `server.ts` (Node.js only)
-- **tsup bundler**: Two separate configs in array — index gets "use client" esbuild banner, server does not. Treeshake disabled on index to prevent rollup from stripping the directive
+- **Four entry points**: `index.ts` (client), `server.ts` (Node.js), `prisma.ts` (Prisma plugin), `drizzle.ts` (Drizzle plugin)
+- **tsup bundler**: Four separate configs in array — index gets "use client" esbuild banner, others do not. Treeshake disabled on index to prevent rollup from stripping the directive
 - **Zero runtime deps**: All icons are inline SVGs, JSON renderer is custom recursive React component, all styles are inline
 - **Production guard**: `DebugPanel` returns `null` when `NODE_ENV === 'production'`
 - **Serialization**: `safeSerialize()` handles circular refs, `normalizeForBoundary()` converts Date/BigInt/undefined/class instances to JSON-safe values
+- **Cache Inspector**: `inspectCache()` wraps fetch, reads `x-nextjs-cache`/`x-vercel-cache`/`cf-cache-status` headers, shows colored HIT/MISS/STALE pills in panel
+- **Redirect Interceptor**: `debugRedirect()` logs before calling Next.js `redirect()`, creates warn-level entry
+- **Editor Deep Linking**: Source filenames in panel are clickable links (`vscode://`, `cursor://`, `webstorm://`), configurable via `editorScheme` prop
 
 ## Build & Test Commands
 ```bash
 pnpm build        # tsup → dist/ (CJS + ESM + DTS for both entry points)
 pnpm typecheck    # tsc --noEmit
-pnpm test         # vitest run (34 tests)
+pnpm test         # vitest run (46 tests)
 pnpm dev          # tsup --watch
 ```
 
@@ -47,8 +54,10 @@ pnpm dev          # tsup --watch
 - @types/node: 25.5.0
 
 ## Bundle Size
-- Client bundle (index.mjs): ~36KB raw, ~7.6KB gzipped (target: <8KB)
-- Server bundle (server.mjs): ~8.6KB raw
+- Client bundle (index.mjs): ~38KB raw, ~8.2KB gzipped (target: <10KB)
+- Server bundle (server.mjs): ~11KB raw
+- Prisma plugin (prisma.mjs): ~8KB raw
+- Drizzle plugin (drizzle.mjs): ~7KB raw
 
 ## CI
 GitHub Actions workflow (`.github/workflows/ci.yml`): typecheck → build → test → verify dist → bundle size gate (<10KB gzipped). Runs on Node 20 + 22.
@@ -58,6 +67,8 @@ GitHub Actions workflow (`.github/workflows/ci.yml`): typecheck → build → te
 - `debug.server.ts` imports only from `types.ts` and Node.js `crypto`
 - `DebugPanel.tsx` imports only from `types.ts` and React
 - `DebugProvider.tsx` imports from `types.ts`, React, and `DebugPanel.tsx`
+- `prisma.ts` imports from `types.ts` and `debug.server.ts`
+- `drizzle.ts` imports from `types.ts` and `debug.server.ts`
 - `index.ts` re-exports from `DebugPanel`, `DebugProvider`, `types`
 - `server.ts` re-exports from `debug.server`, `types`
 

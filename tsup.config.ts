@@ -22,7 +22,29 @@ export default defineConfig([
     entry: { server: "src/server.ts" },
     format: ["cjs", "esm"],
     dts: true,
-    clean: false, // don't clean dist again — index already built
+    clean: false,
+    external: ["react", "react-dom", "next"],
+    splitting: false,
+    sourcemap: true,
+    treeshake: true,
+  },
+  // Prisma plugin — server-only
+  {
+    entry: { prisma: "src/prisma.ts" },
+    format: ["cjs", "esm"],
+    dts: true,
+    clean: false,
+    external: ["react", "react-dom", "next"],
+    splitting: false,
+    sourcemap: true,
+    treeshake: true,
+  },
+  // Drizzle plugin — server-only
+  {
+    entry: { drizzle: "src/drizzle.ts" },
+    format: ["cjs", "esm"],
+    dts: true,
+    clean: false,
     external: ["react", "react-dom", "next"],
     splitting: false,
     sourcemap: true,

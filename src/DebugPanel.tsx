@@ -9,16 +9,20 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import type { DebugEntry, DebugLevel, DebugPanelProps } from "./types";
+import type { CacheStatus, DebugEntry, DebugLevel, DebugPanelProps } from "./types";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const FONT_FAMILY =
   "'Geist Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace";
 
-const PANEL_WIDTH = 480;
+const DEFAULT_PANEL_WIDTH = 480;
 const SNAP_THRESHOLD = 20;
 const STORAGE_KEY = "next-server-debug-position";
+const MIN_PANEL_WIDTH = 320;
+const MAX_PANEL_WIDTH = 900;
+const MIN_PANEL_HEIGHT = 120;
+const MAX_PANEL_HEIGHT = 700;
 
 const LEVEL_COLORS: Record<DebugLevel, string> = {
   info: "#3b82f6",
@@ -83,6 +87,20 @@ const LIGHT_THEME: ThemeColors = {
 const EXPANDED_TINTS: Partial<Record<DebugLevel, string>> = {
   warn: "rgba(245,158,11,0.04)",
   error: "rgba(239,68,68,0.05)",
+};
+
+const CACHE_STATUS_COLORS: Record<CacheStatus, string> = {
+  HIT: "#22c55e",
+  MISS: "#ef4444",
+  STALE: "#f59e0b",
+  REVALIDATE: "#f59e0b",
+  SKIP: "#6b7280",
+};
+
+const EDITOR_SCHEMES: Record<string, (path: string) => string> = {
+  vscode: (p) => `vscode://file/${p}`,
+  cursor: (p) => `cursor://file/${p}`,
+  webstorm: (p) => `jetbrains://web-storm/navigate/reference?path=${p}`,
 };
 
 // Static CSS for animations and scrollbar styling.
@@ -457,6 +475,8 @@ interface EntryRowProps {
   theme: ThemeColors;
   showRelativeTime: boolean;
   onToggleTimeFormat: () => void;
+  editorScheme: string | false;
+  projectRoot?: string;
 }
 
 function EntryRow({
@@ -464,6 +484,8 @@ function EntryRow({
   theme,
   showRelativeTime,
   onToggleTimeFormat,
+  editorScheme,
+  projectRoot,
 }: EntryRowProps): ReactNode {
   const [expanded, setExpanded] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -535,6 +557,25 @@ function EntryRow({
           {entry.level}
         </span>
 
+        {/* Cache status pill */}
+        {entry.cacheStatus && (
+          <span
+            style={{
+              background: CACHE_STATUS_COLORS[entry.cacheStatus],
+              color: "#fff",
+              fontSize: 8,
+              fontWeight: 700,
+              textTransform: "uppercase",
+              padding: "1px 4px",
+              borderRadius: 3,
+              letterSpacing: "0.3px",
+              flexShrink: 0,
+            }}
+          >
+            {entry.cacheStatus}
+          </span>
+        )}
+
         {/* Label */}
         <span
           style={{
@@ -548,16 +589,40 @@ function EntryRow({
           {entry.label}
         </span>
 
-        {/* Source filename */}
-        <span
-          style={{
-            color: theme.textMuted,
-            fontSize: 9,
-            flexShrink: 0,
-          }}
-        >
-          {getFilename(entry.source)}
-        </span>
+        {/* Source filename — deep-link to editor */}
+        {editorScheme && EDITOR_SCHEMES[editorScheme] ? (
+          <a
+            href={EDITOR_SCHEMES[editorScheme](
+              entry.source.startsWith("/")
+                ? entry.source
+                : projectRoot
+                  ? `${projectRoot}/${entry.source}`
+                  : entry.source
+            )}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              color: theme.textMuted,
+              fontSize: 9,
+              flexShrink: 0,
+              textDecoration: "none",
+              cursor: "pointer",
+              borderBottom: `1px dotted ${theme.textMuted}`,
+            }}
+            title={`Open in ${editorScheme}`}
+          >
+            {getFilename(entry.source)}
+          </a>
+        ) : (
+          <span
+            style={{
+              color: theme.textMuted,
+              fontSize: 9,
+              flexShrink: 0,
+            }}
+          >
+            {getFilename(entry.source)}
+          </span>
+        )}
 
         {/* Duration */}
         {entry.durationMs != null && (
@@ -628,6 +693,8 @@ export function DebugPanel({
   theme: themeProp = "dark",
   maxHeight = 360,
   opacity = 0.97,
+  editorScheme = "vscode",
+  projectRoot,
 }: DebugPanelProps): ReactNode {
   // Production guard
   if (process.env.NODE_ENV === "production") return null;
@@ -648,10 +715,15 @@ export function DebugPanel({
   const [internalEntries, setInternalEntries] = useState<DebugEntry[]>(entries);
   const [styleInjected, setStyleInjected] = useState(false);
 
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
+  const [panelHeight, setPanelHeight] = useState(maxHeight);
+
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
   const dragStart = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
+  const resizeStart = useRef<{ x: number; y: number; w: number; h: number } | null>(null);
+  const sizeRef = useRef({ w: DEFAULT_PANEL_WIDTH, h: maxHeight });
   const autoScroll = useRef(true);
 
   // Inject styles once via DOM API (avoids dangerouslySetInnerHTML)
@@ -696,13 +768,22 @@ export function DebugPanel({
     return () => mq.removeEventListener("change", handler);
   }, [themeProp]);
 
-  // Load persisted position
+  // Keep sizeRef in sync
+  useEffect(() => { sizeRef.current.w = panelWidth; }, [panelWidth]);
+  useEffect(() => { sizeRef.current.h = panelHeight; }, [panelHeight]);
+
+  // Load persisted position + size
   useEffect(() => {
     if (typeof window === "undefined") return;
     try {
       const stored = sessionStorage.getItem(STORAGE_KEY);
       if (stored) {
-        setPanelPos(JSON.parse(stored) as { x: number; y: number });
+        const data = JSON.parse(stored) as { x?: number; y?: number; w?: number; h?: number };
+        if (data.x !== undefined && data.y !== undefined) {
+          setPanelPos({ x: data.x, y: data.y });
+        }
+        if (data.w) { setPanelWidth(data.w); sizeRef.current.w = data.w; }
+        if (data.h) { setPanelHeight(data.h); sizeRef.current.h = data.h; }
       }
     } catch {
       /* ignore */
@@ -776,13 +857,13 @@ export function DebugPanel({
         const vh = window.innerHeight;
         if (nx < SNAP_THRESHOLD) nx = 0;
         if (ny < SNAP_THRESHOLD) ny = 0;
-        if (nx + PANEL_WIDTH > vw - SNAP_THRESHOLD) nx = vw - PANEL_WIDTH;
+        if (nx + sizeRef.current.w > vw - SNAP_THRESHOLD) nx = vw - sizeRef.current.w;
         if (ny + 40 > vh - SNAP_THRESHOLD) ny = vh - 40;
 
         const pos = { x: nx, y: ny };
         setPanelPos(pos);
         try {
-          sessionStorage.setItem(STORAGE_KEY, JSON.stringify(pos));
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ ...pos, w: sizeRef.current.w, h: sizeRef.current.h }));
         } catch {
           /* ignore */
         }
@@ -791,6 +872,47 @@ export function DebugPanel({
       const onUp = () => {
         setIsDragging(false);
         dragStart.current = null;
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    },
+    []
+  );
+
+  const onResizeStart = useCallback(
+    (e: ReactMouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      resizeStart.current = {
+        x: e.clientX,
+        y: e.clientY,
+        w: sizeRef.current.w,
+        h: sizeRef.current.h,
+      };
+
+      const onMove = (me: globalThis.MouseEvent) => {
+        if (!resizeStart.current) return;
+        const dx = me.clientX - resizeStart.current.x;
+        const dy = me.clientY - resizeStart.current.y;
+        const newW = Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, resizeStart.current.w + dx));
+        const newH = Math.min(MAX_PANEL_HEIGHT, Math.max(MIN_PANEL_HEIGHT, resizeStart.current.h + dy));
+        setPanelWidth(newW);
+        setPanelHeight(newH);
+        sizeRef.current = { w: newW, h: newH };
+        try {
+          const stored = sessionStorage.getItem(STORAGE_KEY);
+          const pos = stored ? JSON.parse(stored) : {};
+          sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ ...pos, w: newW, h: newH }));
+        } catch {
+          /* ignore */
+        }
+      };
+
+      const onUp = () => {
+        resizeStart.current = null;
         window.removeEventListener("mousemove", onMove);
         window.removeEventListener("mouseup", onUp);
       };
@@ -858,7 +980,7 @@ export function DebugPanel({
       ref={panelRef}
       style={{
         ...positionStyle,
-        width: PANEL_WIDTH,
+        width: panelWidth,
         maxWidth: "calc(100vw - 32px)",
         borderRadius: 8,
         overflow: "hidden",
@@ -992,7 +1114,7 @@ export function DebugPanel({
       {/* Collapsible content */}
       <div
         style={{
-          maxHeight: collapsed ? 0 : maxHeight + 80,
+          maxHeight: collapsed ? 0 : panelHeight + 80,
           overflow: "hidden",
           transition: "max-height 0.2s ease",
         }}
@@ -1114,7 +1236,7 @@ export function DebugPanel({
           className="nsd-scrollbar"
           onScroll={onListScroll}
           style={{
-            maxHeight,
+            maxHeight: panelHeight,
             overflowY: "auto",
             overflowX: "hidden",
           }}
@@ -1146,6 +1268,8 @@ export function DebugPanel({
                 theme={theme}
                 showRelativeTime={showRelativeTime}
                 onToggleTimeFormat={() => setShowRelativeTime((v) => !v)}
+                editorScheme={editorScheme}
+                projectRoot={projectRoot}
               />
             ))
           )}
@@ -1157,7 +1281,7 @@ export function DebugPanel({
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: "4px 12px",
+            padding: "4px 24px 4px 12px",
             borderTop: `1px solid ${theme.border}`,
             fontSize: 9,
             color: theme.textMuted,
@@ -1169,6 +1293,34 @@ export function DebugPanel({
           <span>{formatBytes(totalSize)}</span>
         </div>
       </div>
+
+      {/* Resize handle — bottom-right corner grip, only when expanded */}
+      {!collapsed && (
+        <div
+          onMouseDown={onResizeStart}
+          title="Drag to resize panel"
+          style={{
+            position: "absolute",
+            bottom: 1,
+            right: 1,
+            width: 18,
+            height: 18,
+            cursor: "nwse-resize",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            userSelect: "none",
+            zIndex: 2,
+            borderRadius: "0 0 7px 0",
+          }}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" stroke={theme.textSecondary} strokeWidth="1.3" fill="none" opacity="0.7">
+            <line x1="9" y1="1" x2="1" y2="9" />
+            <line x1="9" y1="4.5" x2="4.5" y2="9" />
+            <line x1="9" y1="8" x2="8" y2="9" />
+          </svg>
+        </div>
+      )}
     </div>
   );
 }
