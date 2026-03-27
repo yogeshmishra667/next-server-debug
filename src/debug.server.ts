@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { generateId } from "./uuid";
 import type {
   CacheStatus,
   DebugEntry,
@@ -7,6 +7,7 @@ import type {
   Debugger,
 } from "./types";
 import { debugStore } from "./store";
+import { safeSerialize, safeSerializeWithSize } from "./serialize";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -24,175 +25,13 @@ const LEVEL_LABELS: Record<DebugLevel, string> = {
 
 // ─── Serialization Utilities ─────────────────────────────────────────────────
 
-/**
- * Safely serialize data, handling circular references and non-serializable values.
- * Returns a JSON-safe value that can cross the server→client boundary.
- */
-export function safeSerialize(data: unknown): unknown {
-  try {
-    const json = JSON.stringify(data);
-    if (json.length > MAX_SERIALIZABLE_SIZE) {
-      return `[truncated: ${json.length} bytes]`;
-    }
-    return JSON.parse(json) as unknown;
-  } catch {
-    return walkAndSerialize(data, new WeakSet());
-  }
-}
-
-function walkAndSerialize(value: unknown, seen: WeakSet<object>): unknown {
-  if (value === null || value === undefined) {
-    return value ?? null;
-  }
-
-  if (typeof value === "bigint") {
-    return `${value.toString()}n`;
-  }
-
-  if (typeof value === "function") {
-    return `[function: ${value.name || "anonymous"}]`;
-  }
-
-  if (typeof value === "symbol") {
-    return `[symbol: ${value.toString()}]`;
-  }
-
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-
-  if (value instanceof RegExp) {
-    return value.toString();
-  }
-
-  if (value instanceof Error) {
-    return {
-      __type: "Error",
-      name: value.name,
-      message: value.message,
-      stack: value.stack,
-    };
-  }
-
-  if (typeof value !== "object") {
-    return value;
-  }
-
-  if (seen.has(value)) {
-    return "[circular reference]";
-  }
-  seen.add(value);
-
-  if (Array.isArray(value)) {
-    const result: unknown[] = [];
-    for (const item of value) {
-      result.push(walkAndSerialize(item, seen));
-    }
-    const json = JSON.stringify(result);
-    if (json.length > MAX_SERIALIZABLE_SIZE) {
-      return `[truncated: ${json.length} bytes]`;
-    }
-    return result;
-  }
-
-  const result: Record<string, unknown> = {};
-  const proto = Object.getPrototypeOf(value) as object | null;
-  if (
-    proto !== null &&
-    proto !== Object.prototype &&
-    proto.constructor?.name
-  ) {
-    result.__type = proto.constructor.name;
-  }
-
-  for (const key of Object.getOwnPropertyNames(value)) {
-    result[key] = walkAndSerialize(
-      (value as Record<string, unknown>)[key],
-      seen
-    );
-  }
-
-  const json = JSON.stringify(result);
-  if (json.length > MAX_SERIALIZABLE_SIZE) {
-    return `[truncated: ${json.length} bytes]`;
-  }
-
-  return result;
-}
+export { safeSerialize } from "./serialize";
 
 /**
- * Normalize data for the server→client boundary.
- * Converts Date → ISO string, BigInt → string with `n` suffix,
- * undefined → null, class instances → plain objects with `__type`.
+ * Backward compatibility export. Now acts just like safeSerialize.
  */
 export function normalizeForBoundary(data: unknown): unknown {
-  return normalizeValue(data, new WeakSet());
-}
-
-function normalizeValue(value: unknown, seen: WeakSet<object>): unknown {
-  if (value === undefined) return null;
-  if (value === null) return null;
-
-  if (typeof value === "bigint") {
-    return `${value.toString()}n`;
-  }
-
-  if (typeof value === "function") {
-    return `[function: ${value.name || "anonymous"}]`;
-  }
-
-  if (typeof value === "symbol") {
-    return `[symbol: ${value.toString()}]`;
-  }
-
-  if (value instanceof Date) {
-    return value.toISOString();
-  }
-
-  if (value instanceof RegExp) {
-    return value.toString();
-  }
-
-  if (value instanceof Error) {
-    return {
-      __type: "Error",
-      name: value.name,
-      message: value.message,
-      stack: value.stack,
-    };
-  }
-
-  if (typeof value !== "object") {
-    return value;
-  }
-
-  if (seen.has(value)) {
-    return "[circular reference]";
-  }
-  seen.add(value);
-
-  if (Array.isArray(value)) {
-    return value.map((item) => normalizeValue(item, seen));
-  }
-
-  const result: Record<string, unknown> = {};
-  const proto = Object.getPrototypeOf(value) as object | null;
-  if (
-    proto !== null &&
-    proto !== Object.prototype &&
-    proto.constructor?.name
-  ) {
-    result.__type = proto.constructor.name;
-  }
-
-  for (const key of Object.getOwnPropertyNames(value)) {
-    result[key] = normalizeValue(
-      (value as Record<string, unknown>)[key],
-      seen
-    );
-  }
-
-  return result;
+  return safeSerialize(data);
 }
 
 // ─── Terminal Logging ────────────────────────────────────────────────────────
@@ -223,16 +62,6 @@ function logToTerminal(entry: DebugEntry): void {
   }
 }
 
-// ─── Compute Size ────────────────────────────────────────────────────────────
-
-function computeSize(data: unknown): number {
-  try {
-    return JSON.stringify(data).length;
-  } catch {
-    return 0;
-  }
-}
-
 // ─── Core Functions ──────────────────────────────────────────────────────────
 
 /**
@@ -252,9 +81,18 @@ export function dbg(
   level: DebugLevel = "info",
   tags?: string[]
 ): DebugEntry {
+  // Fast-path: skip all work in production
+  if (process.env.NODE_ENV === "production") {
+    return { id: "", label, data: null, level, source, timestamp: "" } as DebugEntry;
+  }
+
   let normalizedData: unknown;
+  let size = 0;
+
   try {
-    normalizedData = safeSerialize(normalizeForBoundary(data));
+    const serialized = safeSerializeWithSize(data);
+    normalizedData = serialized.value;
+    size = serialized.size;
   } catch {
     normalizedData = {
       error: "circular reference — data not serializable",
@@ -263,13 +101,13 @@ export function dbg(
   }
 
   const entry: DebugEntry = {
-    id: randomUUID(),
+    id: generateId(),
     label,
     data: normalizedData,
     level,
     source,
     timestamp: new Date().toISOString(),
-    size: computeSize(normalizedData),
+    size,
   };
 
   if (tags && tags.length > 0) {

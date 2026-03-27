@@ -1,10 +1,11 @@
 import { debugStore } from "./store";
 import type { DebugEntry, DebugLevel } from "./types";
-import { randomUUID } from "crypto";
+import { generateId } from "./uuid";
 
 // ─── Fetch Interceptor ──────────────────────────────────────────────────────
 
 let fetchPatched = false;
+let originalFetch: typeof globalThis.fetch | null = null;
 
 /**
  * Monkey-patch the global `fetch` to auto-log every request/response.
@@ -22,10 +23,8 @@ let fetchPatched = false;
  */
 export function instrumentFetch(): void {
   if (fetchPatched) return;
-  if (typeof globalThis.fetch !== "function") return;
-  if (process.env.NODE_ENV === "production") return;
-
-  const originalFetch = globalThis.fetch;
+  const localOriginalFetch = globalThis.fetch;
+  originalFetch = localOriginalFetch;
   fetchPatched = true;
 
   globalThis.fetch = async function patchedFetch(
@@ -42,11 +41,11 @@ export function instrumentFetch(): void {
     const method = init?.method ?? "GET";
 
     try {
-      const response = await originalFetch(input, init);
+      const response = await localOriginalFetch(input, init);
       const durationMs = Math.round((performance.now() - start) * 100) / 100;
 
       const entry: DebugEntry = {
-        id: randomUUID(),
+        id: generateId(),
         label: `${method} ${shortenUrl(url)}`,
         data: {
           url,
@@ -69,7 +68,7 @@ export function instrumentFetch(): void {
       const durationMs = Math.round((performance.now() - start) * 100) / 100;
 
       const entry: DebugEntry = {
-        id: randomUUID(),
+        id: generateId(),
         label: `${method} ${shortenUrl(url)} [FAILED]`,
         data: {
           url,
@@ -95,9 +94,11 @@ export function instrumentFetch(): void {
  * Useful for testing or when disabling instrumentation.
  */
 export function restoreFetch(): void {
+  if (originalFetch) {
+    globalThis.fetch = originalFetch;
+    originalFetch = null;
+  }
   fetchPatched = false;
-  // Note: We can't truly restore since we don't keep a reference.
-  // This just prevents patching again when called.
 }
 
 // ─── Server Action Wrapper ──────────────────────────────────────────────────
@@ -128,7 +129,7 @@ export function withDebug<TArgs extends unknown[], TResult>(
     }
 
     const start = performance.now();
-    const actionId = randomUUID();
+    const actionId = generateId();
 
     // Log start
     const startEntry: DebugEntry = {
@@ -211,7 +212,7 @@ export function withDebugMiddleware<TReq, TRes>(
         const durationMs = Math.round((performance.now() - start) * 100) / 100;
 
         const entry: DebugEntry = {
-          id: randomUUID(),
+          id: generateId(),
           label: `Middleware: ${shortenUrl(url)}`,
           data: { url, durationMs },
           level: durationMs > debugStore.getConfig().thresholds.slow ? "warn" : "info",
@@ -226,7 +227,7 @@ export function withDebugMiddleware<TReq, TRes>(
         const durationMs = Math.round((performance.now() - start) * 100) / 100;
 
         const entry: DebugEntry = {
-          id: randomUUID(),
+          id: generateId(),
           label: `Middleware: ${shortenUrl(url)} [FAILED]`,
           data: {
             url,
@@ -302,7 +303,7 @@ export function withRouteDebug<TReq, TRes>(
             : undefined;
 
         const entry: DebugEntry = {
-          id: randomUUID(),
+          id: generateId(),
           label: name,
           data: { url: shortenUrl(url), method, status, durationMs },
           level: durationMs > debugStore.getConfig().thresholds.slow ? "warn" : "perf",
@@ -317,7 +318,7 @@ export function withRouteDebug<TReq, TRes>(
         const durationMs = Math.round((performance.now() - start) * 100) / 100;
 
         const entry: DebugEntry = {
-          id: randomUUID(),
+          id: generateId(),
           label: `${name} [FAILED]`,
           data: {
             url: shortenUrl(url),

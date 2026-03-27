@@ -5,10 +5,12 @@ import {
   useEffect,
   useRef,
   useCallback,
+  memo,
   type ReactNode,
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
+import { buildSpanTree } from "./span-tree";
 import type { CacheStatus, DebugEntry, DebugLevel, DebugPanelProps, DebugViewMode, DebugSpanNode } from "./types";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -480,7 +482,7 @@ interface EntryRowProps {
   projectRoot?: string;
 }
 
-function EntryRow({
+const EntryRow = memo(function EntryRow({
   entry,
   theme,
   showRelativeTime,
@@ -675,19 +677,6 @@ function EntryRow({
           </span>
         )}
 
-        {/* Duration */}
-        {entry.durationMs != null && (
-          <span
-            style={{
-              color: theme.textSecondary,
-              fontSize: 9,
-              flexShrink: 0,
-            }}
-          >
-            {entry.durationMs}ms
-          </span>
-        )}
-
         {/* Timestamp */}
         <span
           onClick={(e) => {
@@ -732,30 +721,8 @@ function EntryRow({
       </div>
     </div>
   );
-}
+});
 // ─── Tree View Component ─────────────────────────────────────────────────────
-
-function buildClientSpanTree(entries: DebugEntry[]): DebugSpanNode[] {
-  const nodeMap = new Map<string, DebugSpanNode>();
-  const roots: DebugSpanNode[] = [];
-
-  for (const entry of entries) {
-    nodeMap.set(entry.id, { entry, children: [], depth: 0 });
-  }
-
-  for (const entry of entries) {
-    const node = nodeMap.get(entry.id)!;
-    if (entry.parentId && nodeMap.has(entry.parentId)) {
-      const parent = nodeMap.get(entry.parentId)!;
-      node.depth = parent.depth + 1;
-      parent.children.push(node);
-    } else {
-      roots.push(node);
-    }
-  }
-
-  return roots;
-}
 
 function TreeNode({
   node,
@@ -878,7 +845,7 @@ function TreeView({
   editorScheme: string | false;
   projectRoot?: string;
 }): ReactNode {
-  const tree = buildClientSpanTree(entries);
+  const tree = buildSpanTree(entries);
 
   return (
     <>

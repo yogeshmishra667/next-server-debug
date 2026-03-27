@@ -1,12 +1,13 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "crypto";
+import { generateId } from "./uuid";
 import type {
   DebugConfig,
   DebugEntry,
   DebugLevel,
-  DebugSpanNode,
   PerformanceThresholds,
 } from "./types";
+import { safeSerializeWithSize } from "./serialize";
+import { buildSpanTree } from "./span-tree";
 
 // ─── Default Configuration ──────────────────────────────────────────────────
 
@@ -25,49 +26,6 @@ const DEFAULT_CONFIG: DebugConfig = {
   maxEntriesPerRequest: 500,
   persistEntries: false,
 };
-
-// ─── Inline Serialization (avoids circular dep with debug.server.ts) ────────
-
-const MAX_SERIALIZABLE_SIZE = 50 * 1024;
-
-function inlineSafeSerialize(data: unknown): unknown {
-  try {
-    const json = JSON.stringify(data);
-    if (json.length > MAX_SERIALIZABLE_SIZE) {
-      return `[truncated: ${json.length} bytes]`;
-    }
-    return JSON.parse(json) as unknown;
-  } catch {
-    return inlineWalk(data, new WeakSet());
-  }
-}
-
-function inlineWalk(value: unknown, seen: WeakSet<object>): unknown {
-  if (value === null || value === undefined) return value ?? null;
-  if (typeof value === "bigint") return `${value.toString()}n`;
-  if (typeof value === "function") return `[function: ${value.name || "anonymous"}]`;
-  if (typeof value === "symbol") return `[symbol: ${value.toString()}]`;
-  if (value instanceof Date) return value.toISOString();
-  if (value instanceof RegExp) return value.toString();
-  if (value instanceof Error) {
-    return { __type: "Error", name: value.name, message: value.message, stack: value.stack };
-  }
-  if (typeof value !== "object") return value;
-  if (seen.has(value)) return "[circular reference]";
-  seen.add(value);
-  if (Array.isArray(value)) {
-    return value.map((item) => inlineWalk(item, seen));
-  }
-  const result: Record<string, unknown> = {};
-  for (const key of Object.getOwnPropertyNames(value)) {
-    result[key] = inlineWalk((value as Record<string, unknown>)[key], seen);
-  }
-  return result;
-}
-
-function computeSize(data: unknown): number {
-  try { return JSON.stringify(data).length; } catch { return 0; }
-}
 
 // ─── Terminal Logging ───────────────────────────────────────────────────────
 
@@ -125,8 +83,8 @@ class DebugStore {
 
   runWithContext<T>(fn: () => T, traceId?: string): T {
     const ctx: RequestDebugContext = {
-      requestId: randomUUID(),
-      traceId: traceId ?? randomUUID(),
+      requestId: generateId(),
+      traceId: traceId ?? generateId(),
       entries: [],
       activeSpanId: null,
     };
@@ -155,14 +113,18 @@ class DebugStore {
       if (ctx.activeSpanId) {
         entry.parentId = ctx.activeSpanId;
       }
-      if (ctx.entries.length < this.config.maxEntriesPerRequest) {
-        ctx.entries.push(entry);
+      ctx.entries.push(entry);
+      // Evict oldest entries (FIFO) to cap memory usage
+      if (ctx.entries.length > this.config.maxEntriesPerRequest) {
+        ctx.entries.splice(0, ctx.entries.length - this.config.maxEntriesPerRequest);
       }
     } else {
       entry.requestId = undefined;
       entry.traceId = undefined;
-      if (this.globalEntries.length < this.config.maxEntriesPerRequest) {
-        this.globalEntries.push(entry);
+      this.globalEntries.push(entry);
+      // Evict oldest entries (FIFO) to prevent unbounded growth
+      if (this.globalEntries.length > this.config.maxEntriesPerRequest) {
+        this.globalEntries.splice(0, this.globalEntries.length - this.config.maxEntriesPerRequest);
       }
     }
   }
@@ -173,7 +135,7 @@ class DebugStore {
     return [...this.globalEntries];
   }
 
-  getRequestTree(): DebugSpanNode[] {
+  getRequestTree() {
     return buildSpanTree(this.getEntries());
   }
 
@@ -201,29 +163,8 @@ class DebugStore {
   }
 }
 
-// ─── Span Tree Builder ──────────────────────────────────────────────────────
-
-export function buildSpanTree(entries: DebugEntry[]): DebugSpanNode[] {
-  const nodeMap = new Map<string, DebugSpanNode>();
-  const roots: DebugSpanNode[] = [];
-
-  for (const entry of entries) {
-    nodeMap.set(entry.id, { entry, children: [], depth: 0 });
-  }
-
-  for (const entry of entries) {
-    const node = nodeMap.get(entry.id)!;
-    if (entry.parentId && nodeMap.has(entry.parentId)) {
-      const parent = nodeMap.get(entry.parentId)!;
-      node.depth = parent.depth + 1;
-      parent.children.push(node);
-    } else {
-      roots.push(node);
-    }
-  }
-
-  return roots;
-}
+// Re-export from shared module for backward compatibility
+export { buildSpanTree } from "./span-tree";
 
 // ─── Singleton Instance ─────────────────────────────────────────────────────
 
@@ -239,20 +180,24 @@ function createStoreEntry(
   tags?: string[]
 ): DebugEntry {
   let normalizedData: unknown;
+  let size = 0;
+
   try {
-    normalizedData = inlineSafeSerialize(data);
+    const serialized = safeSerializeWithSize(data);
+    normalizedData = serialized.value;
+    size = serialized.size;
   } catch {
     normalizedData = { error: "data not serializable", type: typeof data };
   }
 
   const entry: DebugEntry = {
-    id: randomUUID(),
+    id: generateId(),
     label,
     data: normalizedData,
     level,
     source,
     timestamp: new Date().toISOString(),
-    size: computeSize(normalizedData),
+    size,
   };
 
   if (tags && tags.length > 0) {
@@ -282,6 +227,11 @@ export function debug(
   level: DebugLevel = "info",
   tags?: string[]
 ): DebugEntry {
+  // Fast-path: skip all work in production
+  if (process.env.NODE_ENV === "production") {
+    return { id: "", label, data: null, level, source: "", timestamp: "" };
+  }
+
   const source = captureCallerSource();
   const entry = createStoreEntry(label, data, source, level, tags);
   debugStore.addEntry(entry);
@@ -305,6 +255,11 @@ export async function debugTimed<T>(
   fn: () => Promise<T>,
   tags?: string[]
 ): Promise<T> {
+  // Fast-path: skip all instrumentation in production
+  if (process.env.NODE_ENV === "production") {
+    return fn();
+  }
+
   const source = captureCallerSource();
   const start = performance.now();
 
