@@ -9,6 +9,11 @@ export type DebugLevel = "info" | "warn" | "error" | "success" | "perf";
 export type CacheStatus = "HIT" | "MISS" | "STALE" | "REVALIDATE" | "SKIP";
 
 /**
+ * View mode for the debug panel display.
+ */
+export type DebugViewMode = "list" | "tree" | "timeline";
+
+/**
  * A single debug entry representing a piece of server-side data
  * captured for inspection in the browser debug panel.
  */
@@ -33,6 +38,57 @@ export interface DebugEntry {
   size?: number;
   /** Cache status when this entry was created via `inspectCache()`. */
   cacheStatus?: CacheStatus;
+  /** Request ID for correlating entries within the same HTTP request. */
+  requestId?: string;
+  /** Trace ID for distributed tracing across service boundaries. */
+  traceId?: string;
+  /** Parent entry ID for building span trees (async/nested flow tracking). */
+  parentId?: string;
+}
+
+/**
+ * A span node used for tree-based visualization of nested operations.
+ * Each node wraps a DebugEntry and has references to its children.
+ */
+export interface DebugSpanNode {
+  /** The debug entry for this span. */
+  entry: DebugEntry;
+  /** Child spans nested under this span. */
+  children: DebugSpanNode[];
+  /** Depth level in the span tree (0 = root). */
+  depth: number;
+}
+
+/**
+ * Configurable thresholds for performance insight indicators.
+ */
+export interface PerformanceThresholds {
+  /** Duration in ms above which an operation is considered slow (yellow). Default: `200`. */
+  slow: number;
+  /** Duration in ms above which an operation is critical (red). Default: `1000`. */
+  critical: number;
+  /** Duration in ms above which a fetch is considered slow. Default: `500`. */
+  slowFetch: number;
+  /** Duration in ms above which a DB query is considered slow. Default: `100`. */
+  slowQuery: number;
+}
+
+/**
+ * Global configuration for the debug system.
+ */
+export interface DebugConfig {
+  /** Whether debug tracking is enabled. Default: `process.env.NODE_ENV !== 'production'`. */
+  enabled: boolean;
+  /** Performance thresholds for smart highlighting. */
+  thresholds: PerformanceThresholds;
+  /** Whether to auto-instrument fetch calls. Default: `true`. */
+  autoInstrumentFetch: boolean;
+  /** Whether to log entries to the terminal. Default: `true`. */
+  terminalLogging: boolean;
+  /** Maximum number of entries to retain per request. Default: `500`. */
+  maxEntriesPerRequest: number;
+  /** Whether to persist entries across page reloads. Default: `false`. */
+  persistEntries: boolean;
 }
 
 /**
@@ -52,8 +108,8 @@ export interface DebugSnapshot {
  * Props for the `DebugPanel` floating UI component.
  */
 export interface DebugPanelProps {
-  /** Array of debug entries to display. */
-  entries: DebugEntry[];
+  /** Array of debug entries to display. When omitted in auto mode, reads from global store. */
+  entries?: DebugEntry[];
   /** Corner of the viewport where the panel appears. Default: `"bottom-right"`. */
   position?: "bottom-right" | "bottom-left" | "top-right" | "top-left";
   /** Whether the panel starts in collapsed (minimized) state. Default: `false`. */
@@ -70,6 +126,10 @@ export interface DebugPanelProps {
   editorScheme?: "vscode" | "cursor" | "webstorm" | false;
   /** Absolute path to the project root for resolving relative source paths. */
   projectRoot?: string;
+  /** Display mode for entries. Default: `"list"`. */
+  viewMode?: DebugViewMode;
+  /** Duration threshold in ms for slow operation highlighting. Default: `200`. */
+  slowThreshold?: number;
 }
 
 /**

@@ -1,550 +1,477 @@
-# next-server-debug
+# 🔍 next-server-debug
 
-Floating debug panel for Next.js App Router. Inspect server data — DB queries, API calls, headers, cache status, timing — directly in the browser during development. Zero production cost.
+**Zero-config server-side observability for Next.js App Router**
 
-[![npm version](https://img.shields.io/npm/v/next-server-debug)](https://www.npmjs.com/package/next-server-debug)
-[![license](https://img.shields.io/npm/l/next-server-debug)](https://github.com/yogeshmishra667/next-server-debug/blob/main/LICENSE)
-[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](https://www.typescriptlang.org/)
+See everything your server does — fetch calls, DB queries, timings, cache status — in a beautiful floating panel. Zero runtime dependencies. Zero production cost.
 
-## The problem
+![Demo — list view with tag filtering, duration badges, and entry expansion](./assets/debug-panel-full.png)
 
-Server Components don't have a browser console. `console.log` in a Server Component prints to the terminal, not the browser. When you're debugging database queries, API responses, headers, or timing in the App Router, you're constantly switching between your browser and terminal. `next-server-debug` gives you a floating panel that displays all of that server-side data directly in the browser.
+<p align="center">
+  <a href="./assets/demo.webp">🎬 Watch animated demo</a> · <a href="https://stackblitz.com/github/yogeshmishra667/next-server-debug/tree/main/test-app?file=app/page.tsx">⚡ Try on StackBlitz</a>
+</p>
 
-## Quick start
+---
+
+> [!CAUTION]
+> ## ⚠️ Breaking Changes in v0.6 (New Architecture)
+>
+> v0.6 introduces a **completely new architecture** with a global store, auto-instrumentation, and tree views.
+>
+> **What changed:**
+> - `createDebugger()` still works but is now **legacy** — use `debug()` and `debugTimed()` instead
+> - New global `debugStore` powered by `AsyncLocalStorage` for request-scoped tracing
+> - `DebugPanel` now supports **tree view**, **tag filtering**, **persist mode**, and **smart highlighting**
+> - New auto-instrumentation: `instrumentFetch()`, `withDebug()`, `withDebugMiddleware()`, `withRouteDebug()`
+> - New zero-config plugin: `withServerDebug()` wraps your `next.config.js`
+>
+> **Migration from v0.5:**
+> ```diff
+> - import { createDebugger } from "next-server-debug/server";
+> - const dbg = createDebugger("source");
+> - dbg.log("message", data);
+>
+> + import { debug, debugTimed } from "next-server-debug/server";
+> + debug("message", data, "info", ["tag"]);
+> + const result = await debugTimed("operation", () => fetchData(), ["db"]);
+> ```
+>
+> The old API (`createDebugger`, `dbg`) continues to work — no breaking changes to existing code.
+
+---
+
+## ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| 🔍 **Debug Panel** | Floating panel with list + tree views, search, and level filtering |
+| 🏷️ **Tag Filtering** | Filter entries by tag (db, fetch, analytics, etc.) |
+| ⚡ **Performance Badges** | Color-coded duration: 🟢 fast · 🟡 slow · 🔴 critical |
+| 🌲 **Tree View** | Hierarchical span tree showing parent-child relationships |
+| 💾 **Persist Mode** | Save entries across page reloads via localStorage |
+| 🔗 **Deep Links** | Click source file links to open in VS Code |
+| 🟢 **Cache Status** | HIT/MISS pills on fetch entries |
+| 🔒 **Security** | Auto-redacts sensitive headers and env vars |
+| 📦 **Zero Dependencies** | No runtime dependencies — just React + Next.js |
+| 🚫 **Zero Production Cost** | Tree-shaken in production — `DebugPanel` returns `null` |
+
+---
+
+## 📦 Install
 
 ```bash
 npm install next-server-debug
+# or
+pnpm add next-server-debug
+# or
+yarn add next-server-debug
 ```
+
+**Requirements:** Next.js 14+ with App Router, React 18+
+
+---
+
+## 🚀 Quick Start (2 minutes)
+
+### Step 1: Add to your page
 
 ```tsx
 // app/page.tsx
-import { createDebugger } from "next-server-debug/server";
+import { debug, debugTimed } from "next-server-debug/server";
 import { DebugPanel } from "next-server-debug";
 
 export default async function Page() {
-  const debug = createDebugger("app/page.tsx");
+  // Log anything
+  debug("Page loaded", { route: "/" }, "info", ["page"]);
 
-  const users = await debug.timed("Fetch users", async () => {
-    const res = await fetch("https://api.example.com/users");
-    return res.json();
-  });
+  // Time async operations
+  const users = await debugTimed("Fetch users", async () => {
+    return await db.user.findMany();
+  }, ["db"]);
 
-  debug.success("Page loaded", { userCount: users.length });
-
+  // That's it! Pass entries to the panel
+  const { debugStore } = await import("next-server-debug/server");
+  
   return (
     <main>
-      <h1>Users</h1>
-      <DebugPanel entries={debug.entries} />
+      <h1>{users.length} users</h1>
+      <DebugPanel entries={debugStore.getEntries()} />
     </main>
   );
 }
 ```
 
-The panel renders only in development. In production, `DebugPanel` returns `null`.
+### Step 2: Open your app
 
-## API Reference
+The debug panel appears in the bottom-right corner. Press **`Cmd+Shift+D`** to toggle visibility.
 
-### Server utilities (`next-server-debug/server`)
+**That's it!** 🎉 No config files, no providers, no build plugins needed.
 
-#### `dbg(label, data, source, level?, tags?): DebugEntry`
+---
 
-Create a single debug entry. Logs to the terminal and returns a serializable entry.
+## 📖 Usage Guide
 
-```ts
-import { dbg } from "next-server-debug/server";
+### Basic Logging
 
-const entry = dbg("User fetched", userData, "app/page.tsx", "info", ["db"]);
+```tsx
+import { debug } from "next-server-debug/server";
+
+// Simple log
+debug("Something happened", { key: "value" });
+
+// With level: "info" | "warn" | "error" | "success" | "perf"
+debug("Warning!", { count: 0 }, "warn");
+
+// With tags for filtering
+debug("Query executed", { rows: 42 }, "info", ["db", "analytics"]);
 ```
 
-#### `timed<T>(label, fn, source, level?): Promise<{ result: T; entry: DebugEntry }>`
+### Timing Operations
 
-Time an async operation. Returns both the result and the timing entry.
+```tsx
+import { debugTimed } from "next-server-debug/server";
 
-```ts
-import { timed } from "next-server-debug/server";
+// Returns the result of your async function
+const users = await debugTimed("Fetch users from DB", async () => {
+  return await prisma.user.findMany();
+}, ["db"]);
 
-const { result, entry } = await timed(
-  "Query users",
-  () => db.query("SELECT * FROM users"),
+// Duration is automatically recorded and color-coded:
+// 🟢 < 200ms  |  🟡 200-1000ms  |  🔴 > 1000ms
+```
+
+### Inspecting Request Context
+
+```tsx
+import { inspectHeaders, inspectEnv, inspectSearchParams, inspectCache } from "next-server-debug/server";
+
+// Headers (sensitive ones auto-redacted)
+const headers = await inspectHeaders("app/page.tsx");
+
+// Environment variables (secrets auto-redacted)
+const env = inspectEnv(["NODE_ENV", "DATABASE_URL", "API_KEY"], "app/page.tsx");
+
+// URL search params
+const params = inspectSearchParams(await searchParams, "app/page.tsx");
+
+// Fetch with cache status (HIT/MISS pill)
+const { data, entry } = await inspectCache(
+  "GitHub API",
+  "https://api.github.com/repos/vercel/next.js",
+  undefined,
   "app/page.tsx"
 );
 ```
 
-If `fn` throws, an error entry is created and the error is re-thrown.
+---
 
-#### `createDebugger(source): Debugger`
+## 🌲 Tree View
 
-Create a scoped debugger that collects entries.
+Switch to **TREE** mode in the toolbar to see parent-child span relationships:
 
-```ts
-import { createDebugger } from "next-server-debug/server";
+![Tree view showing hierarchical spans with duration badges](./assets/debug-panel-tree.png)
 
-const debug = createDebugger("app/page.tsx");
+---
 
-debug.log("Info message", { key: "value" });
-debug.warn("Warning", { threshold: 100 });
-debug.error("Error occurred", error);
-debug.success("Operation complete", result);
-debug.perf("Manual timing", {}, 42.5);
+## ⚡ Auto-Instrumentation
 
-const result = await debug.timed("Async op", () => fetchData());
-const snapshot = debug.snapshot("after-queries");
-
-debug.entries;  // DebugEntry[]
-debug.count;    // number
-debug.clear();  // reset
-```
-
-#### `inspectHeaders(source?): Promise<DebugEntry>`
-
-Inspect request headers. Sensitive headers (`Authorization`, `Cookie`, `x-api-key`) are redacted.
+### Instrument Fetch Globally
 
 ```ts
-import { inspectHeaders } from "next-server-debug/server";
+// instrumentation.ts (Next.js instrumentation file)
+import { instrumentFetch } from "next-server-debug/server";
 
-const entry = await inspectHeaders("app/page.tsx");
-```
-
-Returns an error-level entry if called outside a request context (does not throw).
-
-#### `inspectEnv(keys, source?): DebugEntry`
-
-Inspect specific environment variables. Values containing "secret", "key", "password", or "token" (case-insensitive) are redacted.
-
-```ts
-import { inspectEnv } from "next-server-debug/server";
-
-const entry = inspectEnv(
-  ["NODE_ENV", "DATABASE_URL", "API_SECRET_KEY"],
-  "app/page.tsx"
-);
-// API_SECRET_KEY will show as "[redacted]"
-```
-
-#### `inspectSearchParams(searchParams, source?): DebugEntry`
-
-Create an entry for URL search parameters.
-
-```ts
-import { inspectSearchParams } from "next-server-debug/server";
-
-const entry = inspectSearchParams(
-  { page: "1", sort: "name" },
-  "app/page.tsx"
-);
-```
-
-#### `inspectCache(label, url, init?, source?): Promise<{ response: Response; entry: DebugEntry }>`
-
-Fetch a URL and inspect its cache status. Shows a colored **HIT / MISS / STALE / REVALIDATE / SKIP** pill in the panel by reading `x-nextjs-cache`, `x-vercel-cache`, and `cf-cache-status` response headers.
-
-```ts
-import { inspectCache } from "next-server-debug/server";
-
-const { response, entry } = await inspectCache(
-  "JSONPlaceholder API",
-  "https://jsonplaceholder.typicode.com/posts/1",
-  undefined,         // optional RequestInit
-  "app/page.tsx"
-);
-const data = await response.json();
-```
-
-#### `debugRedirect(url, options?): never`
-
-Log a warn-level entry before calling Next.js `redirect()`. Useful for tracing which redirect fired and why.
-
-```ts
-import { debugRedirect } from "next-server-debug/server";
-
-if (!session) {
-  debugRedirect("/login", {
-    reason: "No active session",
-    source: "app/dashboard/page.tsx",
-    type: "replace",          // "replace" | "push" (default "replace")
-  });
+export function register() {
+  instrumentFetch(); // All fetch() calls are now logged automatically
 }
 ```
 
-#### `safeSerialize(data): unknown`
+### Wrap Server Actions
 
-Safely serialize data, handling circular references and truncating values over 50KB.
+```ts
+"use server";
+import { withDebug } from "next-server-debug/server";
 
-#### `normalizeForBoundary(data): unknown`
-
-Normalize data for the server-to-client boundary. Converts `Date` to ISO string, `BigInt` to string with `n` suffix, `undefined` to `null`, and class instances to plain objects.
-
-### Client components (`next-server-debug`)
-
-#### `<DebugPanel>`
-
-Floating debug panel component. Must be used in a client-compatible context.
-
-```tsx
-import { DebugPanel } from "next-server-debug";
-
-<DebugPanel
-  entries={debug.entries}
-  position="bottom-right"     // "bottom-right" | "bottom-left" | "top-right" | "top-left"
-  defaultCollapsed={false}
-  title="server debug"
-  theme="dark"                // "dark" | "light" | "auto"
-  maxHeight={360}             // initial panel height in px (resizable)
-  opacity={0.97}
-  editorScheme="vscode"       // "vscode" | "cursor" | "webstorm" | false
-  projectRoot="/Users/you/my-app"  // used to resolve relative source paths
-/>
-```
-
-Returns `null` in production (`NODE_ENV === 'production'`).
-
-**Keyboard shortcuts:**
-- `Ctrl+Shift+D` / `Cmd+Shift+D` — toggle panel visibility
-- `Ctrl+K` / `Cmd+K` — focus search input
-- `Escape` — clear search, then collapse panel
-
-**Interactions:**
-- Drag the header to reposition (snaps to viewport edges)
-- Drag the resize grip (bottom-right corner) to resize width and height
-- Click the green traffic light dot to copy all entries as JSON
-- Right-click an entry row to copy that entry's data
-- Click a timestamp to toggle between absolute and relative time
-- Click a source filename to open it in your editor (requires `editorScheme` prop)
-
-#### `<DebugProvider>`
-
-Context provider for accumulating entries from multiple components.
-
-```tsx
-import { DebugProvider } from "next-server-debug";
-
-<DebugProvider
-  initialEntries={serverEntries}
-  panelProps={{ position: "bottom-right", theme: "auto" }}
->
-  {children}
-</DebugProvider>
-```
-
-#### `useDebug()`
-
-Hook for adding entries from client components. Must be used within a `<DebugProvider>`.
-
-```tsx
-"use client";
-import { useDebug } from "next-server-debug";
-
-function MyComponent() {
-  const { log, warn, error, success } = useDebug();
-
-  useEffect(() => {
-    log("Component hydrated", { timestamp: Date.now() });
-  }, [log]);
+async function createUser(formData: FormData) {
+  const name = formData.get("name") as string;
+  return await db.user.create({ data: { name } });
 }
+
+export const createUserAction = withDebug("createUser", createUser);
 ```
 
-### Prisma plugin (`next-server-debug/prisma`)
+### Wrap Middleware
 
-Auto-log all Prisma queries with timing as `perf` entries. Errors create `error` entries.
+```ts
+// middleware.ts
+import { withDebugMiddleware } from "next-server-debug/server";
+import { NextResponse } from "next/server";
+
+export const middleware = withDebugMiddleware(async (req) => {
+  // your logic
+  return NextResponse.next();
+});
+```
+
+### Wrap Route Handlers
+
+```ts
+// app/api/users/route.ts
+import { withRouteDebug } from "next-server-debug/server";
+import { NextResponse } from "next/server";
+
+export const GET = withRouteDebug("GET /api/users", async (req) => {
+  const users = await db.user.findMany();
+  return NextResponse.json(users);
+});
+
+export const POST = withRouteDebug("POST /api/users", async (req) => {
+  const body = await req.json();
+  const user = await db.user.create({ data: body });
+  return NextResponse.json(user, { status: 201 });
+});
+```
+
+---
+
+## 🔌 ORM Plugins
+
+### Prisma
 
 ```ts
 import { withDebugLogging } from "next-server-debug/prisma";
-import { createDebugger } from "next-server-debug/server";
 
-const debug = createDebugger("app/page.tsx");
-const prismaWithDebug = prisma.$extends(withDebugLogging(debug));
-
-// All queries are now logged automatically
-const users = await prismaWithDebug.user.findMany();
+const prisma = new PrismaClient().$extends(withDebugLogging());
+// All queries automatically appear in the debug panel
 ```
 
-Or use the standalone helper that manages its own debugger:
-
-```ts
-import { createPrismaDebugExtension } from "next-server-debug/prisma";
-
-const { extension, getEntries } = createPrismaDebugExtension("db");
-const prismaWithDebug = prisma.$extends(extension);
-
-const users = await prismaWithDebug.user.findMany();
-
-// In your component:
-<DebugPanel entries={getEntries()} />
-```
-
-### Drizzle plugin (`next-server-debug/drizzle`)
-
-Auto-log all Drizzle SQL queries as `info` entries with `drizzle` and `sql` tags.
+### Drizzle
 
 ```ts
 import { createDrizzleDebugLogger } from "next-server-debug/drizzle";
 import { drizzle } from "drizzle-orm/node-postgres";
 
-const { logger, getEntries } = createDrizzleDebugLogger("db");
-const db = drizzle(pool, { logger });
-
-const users = await db.select().from(usersTable);
-
-// In your component:
-<DebugPanel entries={getEntries()} />
-```
-
-Or pass a `DebugLogger` instance directly:
-
-```ts
-import { DebugLogger } from "next-server-debug/drizzle";
-import { createDebugger } from "next-server-debug/server";
-
-const debug = createDebugger("app/page.tsx");
-const db = drizzle(pool, { logger: new DebugLogger(debug) });
-```
-
-## Patterns
-
-### Timed database queries
-
-```tsx
-const debug = createDebugger("app/page.tsx");
-
-const users = await debug.timed("SELECT users", () =>
-  prisma.user.findMany({ take: 50 })
-);
-
-const posts = await debug.timed("SELECT posts", () =>
-  prisma.post.findMany({ where: { published: true } })
-);
-```
-
-### Inspecting headers
-
-```tsx
-const headersEntry = await inspectHeaders("app/page.tsx");
-// Authorization, Cookie, x-api-key values are automatically redacted
-```
-
-### Cache inspection
-
-```tsx
-import { inspectCache } from "next-server-debug/server";
-
-const { response, entry } = await inspectCache(
-  "Products API",
-  "https://api.example.com/products",
-  { next: { revalidate: 60 } },
-  "app/page.tsx"
-);
-const products = await response.json();
-// entry shows HIT/MISS/STALE pill in the panel
-```
-
-### Redirect interception
-
-```tsx
-import { debugRedirect } from "next-server-debug/server";
-
-export default async function Page() {
-  const session = await getSession();
-  if (!session) {
-    debugRedirect("/login", {
-      reason: "No active session",
-      source: "app/dashboard/page.tsx",
-    });
-  }
-  // ...
-}
-```
-
-### Editor deep links
-
-Click any source filename in the panel to open that file directly in your editor:
-
-```tsx
-<DebugPanel
-  entries={allEntries}
-  editorScheme="vscode"    // or "cursor" | "webstorm"
-  projectRoot={process.cwd()}
-/>
-```
-
-### Conditional warnings
-
-```tsx
-const debug = createDebugger("app/page.tsx");
-const users = await debug.timed("Fetch users", fetchUsers);
-
-if (users.length > 1000) {
-  debug.warn("Large result set", {
-    count: users.length,
-    hint: "Consider pagination",
-  });
-}
-```
-
-### Multiple panels at different positions
-
-```tsx
-<DebugPanel entries={dbEntries} position="bottom-right" title="database" />
-<DebugPanel entries={apiEntries} position="bottom-left" title="api calls" />
-```
-
-### DebugProvider for nested components
-
-```tsx
-// layout.tsx (Server Component)
-export default async function Layout({ children }) {
-  const debug = createDebugger("layout.tsx");
-  debug.log("Layout rendered", { timestamp: Date.now() });
-
-  return (
-    <DebugProvider initialEntries={debug.entries}>
-      {children}
-    </DebugProvider>
-  );
-}
-
-// components/Widget.tsx (Client Component)
-"use client";
-export function Widget() {
-  const { log, success } = useDebug();
-
-  useEffect(() => {
-    fetch("/api/data")
-      .then(res => res.json())
-      .then(data => success("Widget data loaded", data));
-  }, [success]);
-}
-```
-
-### Route Handlers (terminal logging)
-
-```ts
-// app/api/users/route.ts
-import { dbg, timed } from "next-server-debug/server";
-
-export async function GET() {
-  const { result, entry } = await timed(
-    "Query users",
-    () => db.query("SELECT * FROM users"),
-    "api/users"
-  );
-
-  // DebugPanel can't render here — entries log to terminal.
-  // Optionally include in response body during development:
-  return Response.json({
-    data: result,
-    ...(process.env.NODE_ENV === "development" && { _debug: [entry] }),
-  });
-}
-```
-
-### Server Actions
-
-```ts
-"use server";
-import { dbg, timed } from "next-server-debug/server";
-
-export async function createUser(formData: FormData) {
-  dbg("Action input", Object.fromEntries(formData), "createUser");
-
-  const { result } = await timed(
-    "Insert user",
-    () => db.insert(users).values({ name: formData.get("name") }),
-    "createUser"
-  );
-
-  return result;
-}
-```
-
-### Snapshots for before/after comparison
-
-```tsx
-const debug = createDebugger("migration.tsx");
-
-// ... run queries ...
-const before = debug.snapshot("before-migration");
-
-// ... run migration ...
-const after = debug.snapshot("after-migration");
-
-debug.log("Migration complete", {
-  beforeCount: before.entries.length,
-  afterCount: after.entries.length,
+const db = drizzle(pool, {
+  logger: createDrizzleDebugLogger(),
 });
 ```
 
-## Monorepo usage
+---
 
-In a Turborepo or pnpm workspace:
+## ⚙️ Zero-Config Plugin
 
-```
-packages/
-  next-server-debug/
-    src/
-    package.json          # name: "next-server-debug"
-    tsconfig.json
-apps/
-  web/
-    package.json          # "next-server-debug": "workspace:*"
-```
-
-In `turbo.json`:
-
-```json
-{
-  "pipeline": {
-    "build": {
-      "dependsOn": ["^build"]
-    }
-  }
-}
-```
-
-Turborepo will build `next-server-debug` before any app that depends on it.
-
-In the consuming app's `next.config.js`, you may need to transpile the package:
+Wrap your `next.config.js` for global configuration:
 
 ```js
-const nextConfig = {
-  transpilePackages: ["next-server-debug"],
-};
+// next.config.js
+import { withServerDebug } from "next-server-debug/plugin";
+
+export default withServerDebug(
+  { /* your Next.js config */ },
+  {
+    thresholds: { slow: 300, critical: 2000 },
+    autoInstrumentFetch: true,
+    terminalLogging: true,
+    maxEntriesPerRequest: 500,
+  }
+);
 ```
 
-## Security
+---
 
-**Environment variables**: `inspectEnv` requires you to explicitly list which env vars to expose. It never auto-exposes `process.env`. Values whose key names contain "secret", "key", "password", or "token" (case-insensitive) are replaced with `[redacted]`.
+## 🎨 DebugPanel Props
 
-**Headers**: `inspectHeaders` redacts `Authorization`, `Cookie`, and `x-api-key` header values.
+```tsx
+<DebugPanel
+  entries={entries}           // DebugEntry[] — required
+  theme="auto"                // "dark" | "light" | "auto"
+  defaultCollapsed={false}    // start collapsed?
+  maxHeight={360}             // panel max height in px
+  opacity={0.97}              // panel background opacity
+  editorScheme="vscode"       // "vscode" | "webstorm" | "cursor"
+  projectRoot={process.cwd()} // for source file deep links
+  title="server debug"        // panel title
+/>
+```
 
-**Production guard**: `DebugPanel` checks `process.env.NODE_ENV === 'production'` and returns `null`. No debug UI, no debug data, no bundle cost in production. The panel code is tree-shaken out of production builds.
+### Panel Features
 
-## How it works
+| Toolbar Button | Action |
+|---------------|--------|
+| 🗑️ Clear | Remove all entries |
+| 📋 Copy | Copy entries as JSON |
+| 💾 Persist | Toggle localStorage persistence |
+| **LIST** / **TREE** | Switch between list and tree view |
+| `tags: db analytics ...` | Click to filter by tag |
+| Filter tabs | Filter by level (info, warn, error, success, perf) |
+| Search box | Full-text search across labels and data |
 
-1. Server utilities (`createDebugger`, `dbg`, etc.) run on the server and produce plain JSON objects (`DebugEntry[]`).
-2. These entries are passed as props from Server Components to the `DebugPanel` client component.
-3. Next.js serializes the props across the server-to-client boundary (RSC payload).
-4. `DebugPanel` renders the entries in a floating panel on the client.
+**Keyboard shortcut:** `Cmd+Shift+D` (Mac) / `Ctrl+Shift+D` (Windows) — toggle panel visibility
 
-There is no API route, no WebSocket, no polling. The data flows through React's built-in server-to-client serialization. This means:
+---
 
-- Zero additional network requests
-- Entries are available on first render (no loading state)
-- Works with streaming and Suspense
-- No server-side state or cleanup needed
+## 🧩 Works With Everything
 
-## Contributing
+| Library | Compatibility | How |
+|---------|--------------|-----|
+| **Redux / Zustand / Jotai** | ✅ No conflicts | Different layer (client vs server) |
+| **React Query / SWR** | ✅ Works | Server-side prefetches auto-logged |
+| **Axios** | ✅ Works | Wrap with `debugTimed()` (not auto-instrumented) |
+| **Prisma** | ✅ Auto-logged | Use `withDebugLogging()` plugin |
+| **Drizzle** | ✅ Auto-logged | Use `createDrizzleDebugLogger()` |
+| **tRPC** | ✅ Works | Wrap procedures with `withDebug()` |
+| **fetch()** | ✅ Auto-logged | Via `instrumentFetch()` |
 
-Contributions are welcome. Please open an issue first to discuss what you'd like to change.
+> [!NOTE]
+> `instrumentFetch()` only patches `globalThis.fetch`. HTTP clients like Axios use `XMLHttpRequest` and are **not** auto-instrumented. Wrap Axios calls with `debugTimed()` for manual logging.
+
+---
+
+## 🔒 Security
+
+- **Headers:** `Authorization`, `Cookie`, `x-api-key` are auto-redacted by `inspectHeaders()`
+- **Env vars:** Values containing `secret`, `key`, `password`, `token` are auto-redacted by `inspectEnv()`
+- **Production:** `DebugPanel` returns `null`, all debug functions are no-ops, code is tree-shaken
+- **No network:** Debug data flows through React's RSC serialization — no extra API calls
+
+---
+
+## 🧪 Chrome Extension Support
+
+The `DebugPanel` exposes entries for browser extensions:
+
+```js
+// Listen for updates
+window.addEventListener("next-server-debug", (event) => {
+  const { entries, version, timestamp } = event.detail;
+  console.log(entries.length, "debug entries");
+});
+
+// Or read directly
+const bridge = window.__NEXT_SERVER_DEBUG__;
+if (bridge) console.log(bridge.entries);
+```
+
+---
+
+## 🏗️ Architecture
+
+```text
+┌─────────────────────────────────────────────────┐
+│  Server (Node.js)                               │
+│                                                 │
+│  AsyncLocalStorage ──► DebugStore (singleton)    │
+│       │                    │                     │
+│  debug() / debugTimed()    │                     │
+│  inspectHeaders()          │                     │
+│  instrumentFetch()       entries[]                │
+│  withDebug()               │                     │
+│  withRouteDebug()          │                     │
+│  withDebugMiddleware()     │                     │
+│       │                    ▼                     │
+│       └──────────► RSC Serialization             │
+│                         │                        │
+└─────────────────────────│────────────────────────┘
+                          ▼
+┌─────────────────────────────────────────────────┐
+│  Client (Browser)                               │
+│                                                 │
+│  DebugPanel ◄── entries (via props/context)      │
+│       │                                         │
+│  List View / Tree View / Tag Filter / Persist   │
+│  window.__NEXT_SERVER_DEBUG__ (extension bridge) │
+└─────────────────────────────────────────────────┘
+```
+
+**Key design decisions:**
+- **No network requests** — data flows through React's built-in RSC serialization
+- **Per-request isolation** — `AsyncLocalStorage` ensures entries don't leak between requests
+- **Zero production cost** — every function checks `NODE_ENV` and becomes a no-op
+
+---
+
+## 📚 Full API Reference
+
+### `next-server-debug/server`
+
+| Export | Type | Description |
+|--------|------|-------------|
+| `debug(label, data?, level?, tags?)` | Function | Log a debug entry |
+| `debugTimed(label, fn, tags?)` | Async Function | Time an async operation and return its result |
+| `debugStore` | Object | Global store — `getEntries()`, `clearEntries()`, `configure()` |
+| `createDebugger(source)` | Function | *Legacy* — creates a namespaced debugger |
+| `dbg` | Object | *Legacy* — quick-access `dbg.info()`, `dbg.warn()`, etc. |
+| `inspectHeaders(source?)` | Async Function | Inspect request headers (redacts sensitive) |
+| `inspectEnv(keys, source?)` | Function | Inspect env variables (redacts secrets) |
+| `inspectSearchParams(params, source?)` | Function | Inspect URL search params |
+| `inspectCache(label, url, options?, source?)` | Async Function | Fetch with cache status detection |
+| `instrumentFetch()` | Function | Auto-instrument all `fetch()` calls |
+| `withDebug(name, fn)` | Function | Wrap server actions |
+| `withDebugMiddleware(fn)` | Function | Wrap middleware |
+| `withRouteDebug(name, fn)` | Function | Wrap route handlers (GET, POST, etc.) |
+
+### `next-server-debug`
+
+| Export | Type | Description |
+|--------|------|-------------|
+| `DebugPanel` | Component | Floating debug panel (returns `null` in production) |
+| `DebugProvider` | Component | Context provider with `mode="auto"` support |
+| `useDebug()` | Hook | Access debug entries from context |
+
+### `next-server-debug/plugin`
+
+| Export | Type | Description |
+|--------|------|-------------|
+| `withServerDebug(config, options?)` | Function | Zero-config Next.js wrapper |
+
+### `next-server-debug/prisma`
+
+| Export | Type | Description |
+|--------|------|-------------|
+| `withDebugLogging(options?)` | Function | Prisma `$extends` plugin |
+
+### `next-server-debug/drizzle`
+
+| Export | Type | Description |
+|--------|------|-------------|
+| `createDrizzleDebugLogger()` | Function | Drizzle logger adapter |
+
+---
+
+## 🏠 Monorepo Usage
+
+If using workspaces (Turborepo, Nx), install at the root:
 
 ```bash
-git clone https://github.com/yogeshmishra667/next-server-debug
-cd next-server-debug
-pnpm install
-pnpm dev    # watch mode
-pnpm build  # production build
-pnpm typecheck
+pnpm add -w next-server-debug
 ```
 
-## License
+Then import normally in any app within the workspace.
+
+---
+
+## 🛠️ Development
+
+```bash
+git clone https://github.com/yogeshmishra667/next-server-debug.git
+cd next-server-debug
+pnpm install
+pnpm dev        # watch mode
+pnpm build      # production build
+pnpm test       # 75 tests across 5 suites
+pnpm typecheck  # TypeScript check
+```
+
+### Demo App
+
+```bash
+cd test-app
+pnpm install
+pnpm dev
+# Open http://localhost:3000
+```
+
+---
+
+## 📄 License
 
 MIT

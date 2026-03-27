@@ -6,6 +6,10 @@ export type {
   DebugSnapshot,
   DebugPanelProps,
   Debugger,
+  DebugSpanNode,
+  DebugViewMode,
+  PerformanceThresholds,
+  DebugConfig,
 } from "./types";
 
 export {
@@ -20,3 +24,17 @@ export {
   safeSerialize,
   normalizeForBoundary,
 } from "./debug.server";
+
+export {
+  debugStore,
+  debug,
+  debugTimed,
+  buildSpanTree,
+} from "./store";
+
+export {
+  instrumentFetch,
+  withDebug,
+  withDebugMiddleware,
+  withRouteDebug,
+} from "./instrumentation";

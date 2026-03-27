@@ -5,6 +5,7 @@ import {
   useContext,
   useState,
   useCallback,
+  useEffect,
   type ReactNode,
 } from "react";
 import type { DebugEntry, DebugLevel, DebugPanelProps } from "./types";
@@ -76,23 +77,35 @@ function createEntry(
  * added via the `useDebug()` hook.
  *
  * Renders a `DebugPanel` automatically with all accumulated entries.
+ *
+ * **Auto mode**: When `mode="auto"`, the provider works without any `initialEntries` —
+ * it expects entries to be provided from server components via the global store.
  */
 export function DebugProvider({
   children,
   initialEntries = [],
   panelProps = {},
+  mode = "manual",
 }: {
   children: ReactNode;
   initialEntries?: DebugEntry[];
   panelProps?: Omit<DebugPanelProps, "entries">;
+  /** Mode: `manual` requires passing entries, `auto` connects to global store. */
+  mode?: "manual" | "auto";
 }): ReactNode {
   const [clientEntries, setClientEntries] = useState<DebugEntry[]>([]);
+  const [serverEntries, setServerEntries] = useState<DebugEntry[]>(initialEntries);
+
+  // In auto mode, update when initialEntries changes (e.g., on navigation)
+  useEffect(() => {
+    setServerEntries(initialEntries);
+  }, [initialEntries]);
 
   const addEntry = useCallback((entry: DebugEntry) => {
     setClientEntries((prev) => [...prev, entry]);
   }, []);
 
-  const allEntries = [...initialEntries, ...clientEntries];
+  const allEntries = [...serverEntries, ...clientEntries];
 
   return (
     <DebugContext.Provider value={{ entries: allEntries, addEntry }}>

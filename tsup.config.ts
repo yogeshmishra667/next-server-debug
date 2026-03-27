@@ -50,4 +50,15 @@ export default defineConfig([
     sourcemap: true,
     treeshake: true,
   },
+  // Plugin — next.config wrapper
+  {
+    entry: { plugin: "src/plugin.ts" },
+    format: ["cjs", "esm"],
+    dts: true,
+    clean: false,
+    external: ["react", "react-dom", "next"],
+    splitting: false,
+    sourcemap: true,
+    treeshake: true,
+  },
 ]);

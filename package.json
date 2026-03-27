@@ -1,6 +1,6 @@
 {
   "name": "next-server-debug",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Floating debug panel for Next.js App Router. Inspect server data in the browser during development. Zero production cost.",
   "keywords": [
     "nextjs",
@@ -40,6 +40,11 @@
       "types": "./dist/drizzle.d.ts",
       "import": "./dist/drizzle.mjs",
       "require": "./dist/drizzle.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin.d.ts",
+      "import": "./dist/plugin.mjs",
+      "require": "./dist/plugin.js"
     }
   },
   "files": [

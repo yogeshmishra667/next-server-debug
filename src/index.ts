@@ -6,6 +6,10 @@ export type {
   DebugSnapshot,
   DebugPanelProps,
   Debugger,
+  DebugSpanNode,
+  DebugViewMode,
+  PerformanceThresholds,
+  DebugConfig,
 } from "./types";
 
 export { DebugPanel } from "./DebugPanel";

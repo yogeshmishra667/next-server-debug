@@ -6,6 +6,7 @@ import type {
   DebugSnapshot,
   Debugger,
 } from "./types";
+import { debugStore } from "./store";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -274,6 +275,9 @@ export function dbg(
   if (tags && tags.length > 0) {
     entry.tags = tags;
   }
+
+  // Auto-register in global store (stamps requestId/traceId/parentId)
+  debugStore.addEntry(entry);
 
   logToTerminal(entry);
   return entry;

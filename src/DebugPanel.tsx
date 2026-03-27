@@ -9,7 +9,7 @@ import {
   type CSSProperties,
   type MouseEvent as ReactMouseEvent,
 } from "react";
-import type { CacheStatus, DebugEntry, DebugLevel, DebugPanelProps } from "./types";
+import type { CacheStatus, DebugEntry, DebugLevel, DebugPanelProps, DebugViewMode, DebugSpanNode } from "./types";
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -19,6 +19,7 @@ const FONT_FAMILY =
 const DEFAULT_PANEL_WIDTH = 480;
 const SNAP_THRESHOLD = 20;
 const STORAGE_KEY = "next-server-debug-position";
+const ENTRIES_STORAGE_KEY = "next-server-debug-entries";
 const MIN_PANEL_WIDTH = 320;
 const MAX_PANEL_WIDTH = 900;
 const MIN_PANEL_HEIGHT = 120;
@@ -491,7 +492,17 @@ function EntryRow({
   const [hovered, setHovered] = useState(false);
 
   const levelColor = LEVEL_COLORS[entry.level];
-  const tint = expanded ? EXPANDED_TINTS[entry.level] : undefined;
+  const expandedTint = expanded ? EXPANDED_TINTS[entry.level] : undefined;
+
+  // Smart highlight: slow operations get a subtle warning/critical tint
+  const slowTint = entry.durationMs != null
+    ? entry.durationMs > 1000
+      ? "#ef444408"
+      : entry.durationMs > 200
+        ? "#f59e0b08"
+        : undefined
+    : undefined;
+  const tint = expandedTint || slowTint;
 
   const handleContextMenu = useCallback(
     (e: ReactMouseEvent) => {
@@ -589,6 +600,46 @@ function EntryRow({
           {entry.label}
         </span>
 
+        {/* Tag pills */}
+        {entry.tags && entry.tags.length > 0 && (
+          <span style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+            {entry.tags.map((tag) => (
+              <span
+                key={tag}
+                style={{
+                  fontSize: 8,
+                  color: "#a78bfa",
+                  background: "#a78bfa15",
+                  padding: "0px 4px",
+                  borderRadius: 3,
+                  fontWeight: 500,
+                }}
+              >
+                {tag}
+              </span>
+            ))}
+          </span>
+        )}
+
+        {/* Duration badge (list view) */}
+        {entry.durationMs != null && (
+          <span
+            style={{
+              fontSize: 9,
+              fontWeight: 600,
+              flexShrink: 0,
+              color:
+                entry.durationMs > 1000
+                  ? "#ef4444"
+                  : entry.durationMs > 200
+                    ? "#f59e0b"
+                    : "#22c55e",
+            }}
+          >
+            {entry.durationMs}ms
+          </span>
+        )}
+
         {/* Source filename — deep-link to editor */}
         {editorScheme && EDITOR_SCHEMES[editorScheme] ? (
           <a
@@ -682,11 +733,174 @@ function EntryRow({
     </div>
   );
 }
+// ─── Tree View Component ─────────────────────────────────────────────────────
+
+function buildClientSpanTree(entries: DebugEntry[]): DebugSpanNode[] {
+  const nodeMap = new Map<string, DebugSpanNode>();
+  const roots: DebugSpanNode[] = [];
+
+  for (const entry of entries) {
+    nodeMap.set(entry.id, { entry, children: [], depth: 0 });
+  }
+
+  for (const entry of entries) {
+    const node = nodeMap.get(entry.id)!;
+    if (entry.parentId && nodeMap.has(entry.parentId)) {
+      const parent = nodeMap.get(entry.parentId)!;
+      node.depth = parent.depth + 1;
+      parent.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  return roots;
+}
+
+function TreeNode({
+  node,
+  theme,
+  showRelativeTime,
+  onToggleTimeFormat,
+  editorScheme,
+  projectRoot,
+}: {
+  node: DebugSpanNode;
+  theme: ThemeColors;
+  showRelativeTime: boolean;
+  onToggleTimeFormat: () => void;
+  editorScheme: string | false;
+  projectRoot?: string;
+}): ReactNode {
+  const [expanded, setExpanded] = useState(true);
+  const hasChildren = node.children.length > 0;
+  const indent = node.depth * 16;
+
+  return (
+    <div>
+      {/* Tree connector + small toggle */}
+      <div
+        style={{
+          paddingLeft: indent,
+          display: "flex",
+          alignItems: "flex-start",
+        }}
+      >
+        {/* Toggle or leaf indicator */}
+        <span
+          onClick={hasChildren ? () => setExpanded(!expanded) : undefined}
+          style={{
+            width: 16,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            cursor: hasChildren ? "pointer" : "default",
+            color: theme.textMuted,
+            fontSize: 10,
+            marginTop: 2,
+            flexShrink: 0,
+          }}
+        >
+          {hasChildren ? (expanded ? "▾" : "▸") : "·"}
+        </span>
+
+        {/* Duration badge */}
+        {node.entry.durationMs != null && (
+          <span
+            style={{
+              fontSize: 9,
+              fontWeight: 600,
+              padding: "1px 4px",
+              borderRadius: 3,
+              marginRight: 4,
+              marginTop: 1,
+              flexShrink: 0,
+              background:
+                node.entry.durationMs > 1000
+                  ? "#ef444420"
+                  : node.entry.durationMs > 200
+                    ? "#f59e0b20"
+                    : "#22c55e20",
+              color:
+                node.entry.durationMs > 1000
+                  ? "#ef4444"
+                  : node.entry.durationMs > 200
+                    ? "#f59e0b"
+                    : "#22c55e",
+            }}
+          >
+            {node.entry.durationMs}ms
+          </span>
+        )}
+
+        {/* Entry row (reused) */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <EntryRow
+            entry={node.entry}
+            theme={theme}
+            showRelativeTime={showRelativeTime}
+            onToggleTimeFormat={onToggleTimeFormat}
+            editorScheme={editorScheme}
+            projectRoot={projectRoot}
+          />
+        </div>
+      </div>
+
+      {/* Children */}
+      {hasChildren && expanded &&
+        node.children.map((child) => (
+          <TreeNode
+            key={child.entry.id}
+            node={child}
+            theme={theme}
+            showRelativeTime={showRelativeTime}
+            onToggleTimeFormat={onToggleTimeFormat}
+            editorScheme={editorScheme}
+            projectRoot={projectRoot}
+          />
+        ))}
+    </div>
+  );
+}
+
+function TreeView({
+  entries,
+  theme,
+  showRelativeTime,
+  onToggleTimeFormat,
+  editorScheme,
+  projectRoot,
+}: {
+  entries: DebugEntry[];
+  theme: ThemeColors;
+  showRelativeTime: boolean;
+  onToggleTimeFormat: () => void;
+  editorScheme: string | false;
+  projectRoot?: string;
+}): ReactNode {
+  const tree = buildClientSpanTree(entries);
+
+  return (
+    <>
+      {tree.map((node) => (
+        <TreeNode
+          key={node.entry.id}
+          node={node}
+          theme={theme}
+          showRelativeTime={showRelativeTime}
+          onToggleTimeFormat={onToggleTimeFormat}
+          editorScheme={editorScheme}
+          projectRoot={projectRoot}
+        />
+      ))}
+    </>
+  );
+}
 
 // ─── Main DebugPanel ─────────────────────────────────────────────────────────
 
 export function DebugPanel({
-  entries,
+  entries = [],
   position = "bottom-right",
   defaultCollapsed = false,
   title = "server debug",
@@ -704,6 +918,7 @@ export function DebugPanel({
   const [filter, setFilter] = useState<DebugLevel | "all">("all");
   const [search, setSearch] = useState("");
   const [showRelativeTime, setShowRelativeTime] = useState(false);
+  const [viewMode, setViewMode] = useState<DebugViewMode>("list");
   const [copiedGreen, setCopiedGreen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(
@@ -714,6 +929,8 @@ export function DebugPanel({
   );
   const [internalEntries, setInternalEntries] = useState<DebugEntry[]>(entries);
   const [styleInjected, setStyleInjected] = useState(false);
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [persistEnabled, setPersistEnabled] = useState(false);
 
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
   const [panelHeight, setPanelHeight] = useState(maxHeight);
@@ -741,10 +958,51 @@ export function DebugPanel({
     setStyleInjected(true);
   }, [styleInjected]);
 
-  // Sync external entries
+  // Chrome extension / devtools bridge
+  // Exposes entries on window.__NEXT_SERVER_DEBUG__ and dispatches custom events
   useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const bridge = {
+      entries: internalEntries,
+      version: "1.0.0",
+      timestamp: Date.now(),
+    };
+    (window as unknown as Record<string, unknown>).__NEXT_SERVER_DEBUG__ = bridge;
+
+    // Dispatch custom event so extensions can listen
+    window.dispatchEvent(
+      new CustomEvent("next-server-debug", {
+        detail: bridge,
+      })
+    );
+  }, [internalEntries]);
+
+  // Sync external entries + restore persisted entries
+  useEffect(() => {
+    if (persistEnabled && typeof window !== "undefined") {
+      try {
+        const stored = localStorage.getItem(ENTRIES_STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored) as DebugEntry[];
+          const merged = new Map<string, DebugEntry>();
+          for (const e of parsed) merged.set(e.id, e);
+          for (const e of entries) merged.set(e.id, e);
+          setInternalEntries(Array.from(merged.values()));
+          return;
+        }
+      } catch { /* ignore */ }
+    }
     setInternalEntries(entries);
-  }, [entries]);
+  }, [entries, persistEnabled]);
+
+  // Persist entries when enabled
+  useEffect(() => {
+    if (!persistEnabled || typeof window === "undefined") return;
+    try {
+      localStorage.setItem(ENTRIES_STORAGE_KEY, JSON.stringify(internalEntries.slice(-200)));
+    } catch { /* ignore */ }
+  }, [internalEntries, persistEnabled]);
 
   // Auto-scroll on new entries
   useEffect(() => {
@@ -929,9 +1187,15 @@ export function DebugPanel({
     autoScroll.current = scrollHeight - scrollTop - clientHeight < 30;
   }, []);
 
+  // Collect all unique tags
+  const allTags = Array.from(
+    new Set(internalEntries.flatMap((e) => e.tags || []))
+  ).sort();
+
   // Filter entries
   const filteredEntries = internalEntries.filter((e) => {
     if (filter !== "all" && e.level !== filter) return false;
+    if (activeTag && !(e.tags || []).includes(activeTag)) return false;
     if (search && !e.label.toLowerCase().includes(search.toLowerCase()))
       return false;
     return true;
@@ -957,6 +1221,9 @@ export function DebugPanel({
 
   const clearEntries = useCallback(() => {
     setInternalEntries([]);
+    if (typeof window !== "undefined") {
+      try { localStorage.removeItem(ENTRIES_STORAGE_KEY); } catch { /* ignore */ }
+    }
   }, []);
 
   if (hidden) return null;
@@ -1228,7 +1495,87 @@ export function DebugPanel({
           >
             <CopyIcon size={12} color={theme.textSecondary} />
           </button>
+
+          {/* Persist toggle */}
+          <button
+            onClick={() => setPersistEnabled((v) => !v)}
+            title={persistEnabled ? "Disable persist (localStorage)" : "Persist entries across reloads"}
+            style={{
+              border: "none",
+              background: persistEnabled ? `${theme.textMuted}` : "transparent",
+              color: persistEnabled ? theme.textPrimary : theme.textSecondary,
+              fontSize: 9,
+              fontFamily: FONT_FAMILY,
+              padding: "2px 5px",
+              borderRadius: 3,
+              cursor: "pointer",
+              fontWeight: persistEnabled ? 600 : 400,
+            }}
+          >
+            💾
+          </button>
+
+          {/* View mode toggle */}
+          <div style={{ display: "flex", gap: 2, marginLeft: 4 }}>
+            {(["list", "tree"] as const).map((mode) => (
+              <button
+                key={mode}
+                onClick={() => setViewMode(mode)}
+                title={`${mode} view`}
+                style={{
+                  border: "none",
+                  background: viewMode === mode ? `${theme.textMuted}` : "transparent",
+                  color: viewMode === mode ? theme.textPrimary : theme.textSecondary,
+                  fontSize: 9,
+                  fontFamily: FONT_FAMILY,
+                  padding: "2px 5px",
+                  borderRadius: 3,
+                  cursor: "pointer",
+                  textTransform: "uppercase",
+                  fontWeight: viewMode === mode ? 600 : 400,
+                }}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Tag filter row */}
+        {allTags.length > 0 && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 3,
+              padding: "3px 12px",
+              borderBottom: `1px solid ${theme.border}`,
+              flexWrap: "wrap",
+              fontSize: 9,
+            }}
+          >
+            <span style={{ color: theme.textMuted, marginRight: 2 }}>tags:</span>
+            {allTags.map((tag) => (
+              <button
+                key={tag}
+                onClick={() => setActiveTag(activeTag === tag ? null : tag)}
+                style={{
+                  border: "none",
+                  background: activeTag === tag ? "#a78bfa25" : "transparent",
+                  color: activeTag === tag ? "#a78bfa" : theme.textSecondary,
+                  fontSize: 9,
+                  fontFamily: FONT_FAMILY,
+                  padding: "1px 5px",
+                  borderRadius: 3,
+                  cursor: "pointer",
+                  fontWeight: activeTag === tag ? 600 : 400,
+                }}
+              >
+                {tag}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* Entries list */}
         <div
@@ -1260,6 +1607,15 @@ export function DebugPanel({
               )}
               <span style={{ fontSize: 11 }}>no entries</span>
             </div>
+          ) : viewMode === "tree" ? (
+            <TreeView
+              entries={filteredEntries}
+              theme={theme}
+              showRelativeTime={showRelativeTime}
+              onToggleTimeFormat={() => setShowRelativeTime((v) => !v)}
+              editorScheme={editorScheme}
+              projectRoot={projectRoot}
+            />
           ) : (
             filteredEntries.map((entry) => (
               <EntryRow
