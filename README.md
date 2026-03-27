@@ -12,10 +12,9 @@ See everything your server does — fetch calls, DB queries, timings, cache stat
 
 ---
 
-> [!CAUTION]
-> ## ⚠️ Breaking Changes in v0.6 (New Architecture)
+> **⚠️ CAUTION: Breaking Changes in v1.0.0 (New Architecture)**
 >
-> v0.6 introduces a **completely new architecture** with a global store, auto-instrumentation, and tree views.
+> v1.0.0 introduces a **completely new architecture** with a global store, auto-instrumentation, and tree views.
 >
 > **What changed:**
 > - `createDebugger()` still works but is now **legacy** — use `debug()` and `debugTimed()` instead
